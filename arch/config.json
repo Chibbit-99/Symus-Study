@@ -1,0 +1,4 @@
+{
+  "modules": ["npmloader.js"],
+  "js": ["./src/main.js"]
+}
