@@ -6,7 +6,7 @@
  *   PDF   read text layer -> AI gap check -> OCR flagged pages
  *         -> AI study document -> save document to localStorage
  *   text  AI study document -> save document to localStorage
- *   quiz  AI practice questions from the saved document
+ *   quiz  AI practice questions from every saved document in a study kit
  *
  * Uploaded files and extracted source text stay in memory only. What is
  * persisted is the generated study document and the questions.
@@ -364,25 +364,84 @@
 
   async function runQuizJob(job) {
     const apiKey = requireKey();
-    const resource = Symus.store.getResource(job.resourceId);
-    if (!resource) throw new Error("That resource no longer exists.");
-    if (!resource.document) throw new Error("Generate the study document before making questions.");
+    const kit = Symus.store.getKit(job.kitId);
+    if (!kit) throw new Error("That study kit no longer exists.");
 
-    progress(job, { step: "Writing practice questions…", progress: 15 });
+    const ready = Symus.store
+      .resourcesInKit(kit.id)
+      .filter((resource) => resource.document && resource.document.trim());
+
+    if (!ready.length) {
+      throw new Error(
+        "This study kit has no study documents yet. Process at least one resource before making questions.",
+      );
+    }
+
+    progress(job, { step: `Reading ${ready.length} study document(s)…`, progress: 10 });
+
+    const source = combineDocuments(ready);
+    if (!source.text.trim()) throw new Error("The study documents in this kit are empty.");
+
+    progress(job, {
+      step:
+        ready.length > 1
+          ? `Writing practice questions from ${ready.length} resources…`
+          : "Writing practice questions…",
+      progress: 20,
+    });
 
     const questions = await Symus.ai.generateQuestions({
       apiKey,
-      document: resource.document,
+      document: source.text,
       count: job.count || 10,
       difficulty: job.difficulty || "",
       signal: job.controller.signal,
-      onProgress: (message) => progress(job, { step: message, progress: 40 }),
+      onProgress: (message) => progress(job, { step: message, progress: 45 }),
     });
 
-    Symus.store.updateResource(job.resourceId, {
-      quiz: { generatedAt: new Date().toISOString(), items: questions },
+    Symus.store.setKitQuiz(kit.id, {
+      generatedAt: new Date().toISOString(),
+      items: questions,
+      sourceCount: ready.length,
+      sourceNames: ready.map((resource) => resource.name),
+      truncated: source.truncated,
     });
     progress(job, { step: `${questions.length} practice questions ready.`, progress: 100 });
+  }
+
+  /**
+   * Join every document in the kit into one source for the model.
+   *
+   * When the combined text is longer than the model should be fed in one go,
+   * each resource contributes a proportional slice instead of the first
+   * resources swallowing the whole budget, so questions still cover the kit.
+   */
+  function combineDocuments(resources) {
+    const budget = Symus.ai.MAX_QUIZ_SOURCE_CHARS;
+    const blocks = resources.map((resource) => ({
+      name: resource.name,
+      text: resource.document.trim(),
+    }));
+    const totalLength = blocks.reduce((sum, block) => sum + block.text.length, 0);
+    const truncated = totalLength > budget;
+
+    if (truncated) {
+      const share = Math.max(600, Math.floor(budget / blocks.length));
+      for (const block of blocks) {
+        if (block.text.length > share) {
+          const cut = block.text.lastIndexOf("\n\n", share);
+          block.text = block.text.slice(0, cut > share * 0.5 ? cut : share).trim() + "\n\n[…section truncated…]";
+        }
+      }
+    }
+
+    return {
+      truncated,
+      text: blocks
+        .map((block) => `## Resource: ${block.name}\n\n${block.text}`)
+        .join("\n\n---\n\n")
+        .slice(0, budget + 2000),
+    };
   }
 
   /* ------------------------------------------------------------------ *
@@ -411,13 +470,13 @@
     });
   }
 
-  function makeQuiz(resource, count) {
+  function makeQuiz(kit, count, difficulty = "") {
     return enqueue({
       kind: "quiz",
-      resourceId: resource.id,
-      resourceName: resource.name,
+      kitId: kit.id,
       count,
-      label: `Practice questions for ${resource.name}`,
+      difficulty,
+      label: `Practice questions for ${kit.name}`,
     });
   }
 
@@ -427,6 +486,7 @@
     uploadPdf,
     uploadText,
     makeQuiz,
+    combineDocuments,
     cancelCurrent,
     cancelAll,
     getCurrent,

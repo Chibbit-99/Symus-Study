@@ -25,6 +25,8 @@
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 1200;
   const MAX_OCR_PAGES = 60;
+  // Total study-document text sent when writing practice questions for a kit.
+  const MAX_QUIZ_SOURCE_CHARS = 60000;
 
   /* ------------------------------------------------------------------ *
    * Transport
@@ -434,7 +436,9 @@
   function buildQuestionsPrompt(document, count, difficulty) {
     return [
       "You are writing practice questions for a student, based only on the study document below.",
-      `Create ${count} questions that spread evenly across the document, starting with foundational recall and ending with applied reasoning.`,
+      `Create ${count} questions that spread evenly across ALL of the material below, starting with foundational recall and ending with applied reasoning.`,
+      "The material may combine several resources from one study kit, each introduced by a '## Resource:' heading.",
+      "Cover every resource that has enough content to question, in proportion to its size. Never ask about a single resource only.",
       "Mix the formats:",
       "- about 60% multiple choice with exactly 4 options and one correct answer;",
       "- about 40% short answer with a model answer of 1–3 sentences.",
@@ -501,7 +505,7 @@
    * @returns {Promise<Array<object>>}
    */
   async function generateQuestions({ apiKey, document, count = 10, difficulty = "", signal, onProgress }) {
-    const trimmed = document.slice(0, CHUNK_SIZE * 2);
+    const trimmed = String(document).slice(0, MAX_QUIZ_SOURCE_CHARS + 2000);
     const askCount = Math.min(Math.max(count, 4), 25);
 
     if (onProgress) onProgress(`Writing ${askCount} practice questions…`);
@@ -530,6 +534,7 @@
     MODEL,
     CHUNK_SIZE,
     MAX_OCR_PAGES,
+    MAX_QUIZ_SOURCE_CHARS,
     chat,
     describeError,
     splitIntoChunks,

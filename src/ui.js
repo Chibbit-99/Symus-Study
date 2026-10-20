@@ -29,10 +29,11 @@
   let filterClassId = null;
   let query = "";
   let editingDocId = null;
+  let docViewId = null;
   let quizState = { selected: {}, revealed: {} };
   let renderQueued = false;
   let pendingReprocessId = null;
-  let lastQuizResourceId = null;
+  let lastQuizKey = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -63,6 +64,9 @@
     return "just now";
   }
 
+  const plural = (count, singular, pluralForm = singular + "s") =>
+    `${count} ${count === 1 ? singular : pluralForm}`;
+
   function firstLine(text, fallback = "Pasted text") {
     const line = String(text).split("\n").map((part) => part.trim()).find(Boolean);
     if (!line) return fallback;
@@ -81,9 +85,14 @@
   function parseRoute() {
     const hash = location.hash.replace(/^#\/?/, "");
     const parts = hash.split("/").filter(Boolean);
-    if (parts[0] === "kit" && parts[1]) route = { name: "kit", id: parts[1] };
-    else if (parts[0] === "resource" && parts[1]) route = { name: "resource", id: parts[1] };
-    else route = { name: "dashboard", id: null };
+    if (parts[0] === "kit" && parts[1]) {
+      const tab = parts[2] === "documents" || parts[2] === "questions" ? parts[2] : "resources";
+      route = { name: "kit", id: parts[1], tab };
+    } else if (parts[0] === "resource" && parts[1]) {
+      route = { name: "resource", id: parts[1] };
+    } else {
+      route = { name: "dashboard", id: null };
+    }
   }
 
   function requireKey() {
@@ -137,12 +146,17 @@
 
     if (route.name === "kit") {
       const kit = store.getKit(route.id);
-      els.view.appendChild(kit ? renderKit(kit) : renderMissing("That study kit no longer exists."));
-    } else if (route.name === "resource") {
-      if (route.id !== lastQuizResourceId) {
-        lastQuizResourceId = route.id;
+      if (kit && route.id !== lastQuizKey) {
+        // Fresh kit: reset in-page interactions so answers and the document
+        // picker do not leak between kits.
+        lastQuizKey = route.id;
         quizState = { selected: {}, revealed: {} };
+        docViewId = null;
       }
+      els.view.appendChild(
+        kit ? renderKit(kit, route.tab) : renderMissing("That study kit no longer exists."),
+      );
+    } else if (route.name === "resource") {
       const resource = store.getResource(route.id);
       els.view.appendChild(resource ? renderResource(resource) : renderMissing("That resource no longer exists."));
     } else {
@@ -221,7 +235,7 @@
         <div>
           <p class="eyebrow">${filterClassId ? "Class" : "Dashboard"}</p>
           <h1>${esc(filterClassId ? (store.getClass(filterClassId) || {}).name || "Study kits" : "Study kits")}</h1>
-          <p class="muted">${state.kits.length} kit(s) across ${state.classes.length} class(es) · ${state.resources.length} resource(s)</p>
+          <p class="muted">${plural(state.kits.length, "kit")} across ${plural(state.classes.length, "class", "classes")} · ${plural(state.resources.length, "resource")}</p>
         </div>
         <div class="row">
           <button class="btn" data-action="new-class">New class</button>
@@ -293,8 +307,10 @@
           <h3><a href="#/kit/${esc(kit.id)}">${esc(kit.name)}</a></h3>
           ${cls ? `<span class="chip">${esc(cls.name)}</span>` : ""}
         </header>
-        ${kit.subject ? `<p class="muted small">${esc(kit.subject)}</p>` : ""}
-        <p class="muted small">${resources.length} resource(s) · ${ready} ready · updated ${esc(relativeTime(kit.updatedAt))}</p>
+        ${kit.subject ? `<p class="muted small subject">${esc(kit.subject)}</p>` : ""}
+        <p class="muted small">${plural(resources.length, "resource")} · ${ready} ready${
+          kit.quiz ? ` · ${plural(kit.quiz.items.length, "question")}` : ""
+        }<br>updated ${esc(relativeTime(kit.updatedAt))}</p>
         <footer class="card-foot">
           <a class="btn small primary" href="#/kit/${esc(kit.id)}">Open</a>
           <button class="btn ghost small" data-action="rename-kit" data-id="${esc(kit.id)}">Rename</button>
@@ -306,10 +322,30 @@
 
   /* -------------------------------- kit ---------------------------- */
 
-  function renderKit(kit) {
-    const cls = kit.classId ? store.getClass(kit.classId) : null;
+  function kitTabs(kit, resources, activeTab) {
+    const withDocs = resources.filter((resource) => resource.document);
+    const tabs = [
+      { id: "resources", label: "Resources", count: resources.length, href: `#/kit/${kit.id}` },
+      { id: "documents", label: "Study documents", count: withDocs.length, href: `#/kit/${kit.id}/documents` },
+      {
+        id: "questions",
+        label: "Practice questions",
+        count: kit.quiz ? kit.quiz.items.length : 0,
+        href: `#/kit/${kit.id}/questions`,
+      },
+    ];
+    return `<nav class="tabs" role="tablist" aria-label="Study kit sections">${tabs
+      .map(
+        (tab) => `<a role="tab" aria-selected="${tab.id === activeTab}" class="tab ${
+          tab.id === activeTab ? "active" : ""
+        }" href="${tab.href}">${esc(tab.label)}<span class="count">${tab.count}</span></a>`,
+      )
+      .join("")}</nav>`;
+  }
+
+  function renderKit(kit, tab = "resources") {
     const resources = store.resourcesInKit(kit.id);
-    const settings = store.getSettings();
+    const cls = kit.classId ? store.getClass(kit.classId) : null;
     const page = document.createElement("div");
     page.className = "page";
 
@@ -318,14 +354,27 @@
       <header class="page-head">
         <div>
           <h1>${esc(kit.name)}</h1>
-          <p class="muted">${resources.length} resource(s)${kit.subject ? " · " + esc(kit.subject) : ""}</p>
+          <p class="muted">${plural(resources.length, "resource")}${kit.subject ? " · " + esc(kit.subject) : ""}</p>
         </div>
         <div class="row">
           <button class="btn" data-action="edit-kit" data-id="${esc(kit.id)}">Edit details</button>
-          <button class="btn" data-action="delete-kit" data-id="${esc(kit.id)}" >Delete kit</button>
+          <button class="btn danger" data-action="delete-kit" data-id="${esc(kit.id)}">Delete kit</button>
         </div>
       </header>
+      ${kitTabs(kit, resources, tab)}
+      ${
+        tab === "documents"
+          ? renderKitDocuments(kit, resources)
+          : tab === "questions"
+            ? renderKitQuestions(kit, resources)
+            : renderKitResources(kit, resources)
+      }`;
+    return page;
+  }
 
+  function renderKitResources(kit, resources) {
+    const settings = store.getSettings();
+    return `
       <div class="kit-layout">
         <section class="panel">
           <h2>Add resources</h2>
@@ -364,127 +413,111 @@
           }
         </section>
       </div>`;
-    return page;
   }
 
-  function renderResourceRow(resource) {
-    const pages = resource.pages || {};
-    const meta = [];
-    if (resource.type === "pdf" && pages.total) {
-      meta.push(`${pages.total} page(s)`);
-      if (pages.ocrPages && pages.ocrPages.length) meta.push(`${pages.ocrPages.length} OCR'd`);
+  function renderKitDocuments(kit, resources) {
+    const withDocs = resources.filter((resource) => resource.document);
+    if (!withDocs.length) {
+      return `
+        <section class="panel">
+          <div class="empty">
+            <h3>No study documents yet</h3>
+            <p class="muted">Every processed resource gets its own study document. Add a PDF or pasted text, or check a resource that failed.</p>
+            <a class="btn primary" href="#/kit/${esc(kit.id)}">Add a resource</a>
+          </div>
+        </section>`;
     }
-    if (resource.document) meta.push(`${(resource.document.length / 1000).toFixed(1)}k chars`);
-    if (resource.quiz) meta.push(`${resource.quiz.items.length} questions`);
+
+    const selected = withDocs.find((resource) => resource.id === docViewId) || withDocs[0];
+    return `
+      <div class="doc-layout">
+        <section class="panel doc-side">
+          <div class="panel-head"><h2>Documents</h2><span class="count">${withDocs.length}</span></div>
+          <div class="doc-list">
+            ${withDocs
+              .map(
+                (resource) => `
+              <button class="doc-item ${resource.id === selected.id ? "active" : ""}" data-action="select-doc" data-id="${esc(resource.id)}">
+                <span class="res-icon ${resource.type}">${resource.type === "pdf" ? "PDF" : "TXT"}</span>
+                <span class="doc-item-main">
+                  <span class="doc-item-name">${esc(resource.name)}</span>
+                  <span class="muted tiny">${(resource.document.length / 1000).toFixed(1)}k chars · ${esc(relativeTime(resource.documentUpdatedAt))}</span>
+                </span>
+              </button>`,
+              )
+              .join("")}
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>${esc(selected.name)}</h2>
+            <div class="row tight">
+              <a class="btn small" href="#/resource/${esc(selected.id)}">Open resource</a>
+              <button class="btn small" data-action="copy-doc" data-id="${esc(selected.id)}">Copy</button>
+              <button class="btn small" data-action="download-doc" data-id="${esc(selected.id)}">Download .md</button>
+            </div>
+          </div>
+          <article class="md">${md.render(selected.document)}</article>
+        </section>
+      </div>`;
+  }
+
+  function renderKitQuestions(kit, resources) {
+    const withDocs = resources.filter((resource) => resource.document);
+    if (!withDocs.length) {
+      return `
+        <section class="panel">
+          <div class="empty">
+            <h3>No study documents yet</h3>
+            <p class="muted">Questions are written from every study document in this kit, so at least one resource needs a document first.</p>
+            <a class="btn primary" href="#/kit/${esc(kit.id)}">Add a resource</a>
+          </div>
+        </section>`;
+    }
+
+    const quiz = kit.quiz;
+    const sources = quiz && quiz.sourceNames && quiz.sourceNames.length ? quiz.sourceNames : withDocs.map((r) => r.name);
+    const missing = withDocs.length - (quiz && quiz.sourceCount ? quiz.sourceCount : 0);
 
     return `
-      <article class="res-row">
-        <span class="res-icon ${resource.type}">${resource.type === "pdf" ? "PDF" : "TXT"}</span>
-        <div class="res-main">
-          <a class="res-name" href="#/resource/${esc(resource.id)}">${esc(resource.name)}</a>
-          <p class="muted tiny">
-            ${esc(resource.statusMessage || meta.join(" · ") || "Waiting to process")}
-          </p>
-        </div>
-        <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
-        <button class="icon-btn danger" title="Delete" data-action="delete-resource" data-id="${esc(resource.id)}">×</button>
-      </article>`;
-  }
-
-  /* ------------------------------ resource ------------------------- */
-
-  function renderResource(resource) {
-    const kit = store.getKit(resource.kitId);
-    const pages = resource.pages || {};
-    const processing = resource.status === "processing";
-    const editing = editingDocId === resource.id;
-    const page = document.createElement("div");
-    page.className = "page";
-
-    page.innerHTML = `
-      <nav class="crumbs"><a href="#/">Dashboard</a><span>/</span><a href="#/kit/${esc(resource.kitId)}">${esc(kit ? kit.name : "Kit")}</a><span>/</span><span>${esc(resource.name)}</span></nav>
-      <header class="page-head">
-        <div>
-          <h1>${esc(resource.name)}</h1>
-          <p class="muted">
-            <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
-            ${resource.type === "pdf" ? ` · PDF${pages.total ? ` · ${pages.total} page(s)` : ""}` : " · pasted text"}
-            ${pages.ocrPages && pages.ocrPages.length ? ` · OCR pages ${pages.ocrPages.join(", ")}` : ""}
-            ${resource.document ? ` · updated ${esc(relativeTime(resource.documentUpdatedAt))}` : ""}
-          </p>
-        </div>
-        <div class="row">
-          ${resource.type === "pdf" && !processing ? `<button class="btn" data-action="rerun-resource" data-id="${esc(resource.id)}">Re-run extraction</button>` : ""}
-          <button class="btn danger" data-action="delete-resource" data-id="${esc(resource.id)}">Delete</button>
-        </div>
-      </header>
-
-      ${resource.error ? `<div class="notice error"><strong>Processing failed.</strong> ${esc(resource.error)}</div>` : ""}
-      ${processing ? `<div class="notice"><strong>Working…</strong> ${esc(resource.statusMessage || "Processing this resource.")}</div>` : ""}
-      ${pages.gapNotes ? `<div class="notice subtle"><strong>Gap check:</strong> ${esc(pages.gapNotes)}</div>` : ""}
-
       <section class="panel">
         <div class="panel-head">
-          <h2>Study document</h2>
+          <div>
+            <h2>Practice questions</h2>
+            <p class="muted tiny">Written from all ${plural(withDocs.length, "study document")} in this kit: ${esc(
+              sources.join(", "),
+            )}.</p>
+          </div>
           <div class="row tight">
+            <button class="btn small ${quiz ? "" : "primary"}" data-action="make-quiz" data-id="${esc(kit.id)}">${
+              quiz ? "Regenerate" : "Generate questions"
+            }</button>
             ${
-              resource.document
-                ? editing
-                  ? `<button class="btn primary small" data-action="save-doc" data-id="${esc(resource.id)}">Save</button>
-                     <button class="btn small" data-action="cancel-doc">Cancel</button>`
-                  : `<button class="btn small" data-action="edit-doc" data-id="${esc(resource.id)}">Edit</button>
-                     <button class="btn small" data-action="copy-doc" data-id="${esc(resource.id)}">Copy</button>
-                     <button class="btn small" data-action="download-doc" data-id="${esc(resource.id)}">Download .md</button>`
+              quiz
+                ? `<button class="btn small" data-action="download-quiz" data-id="${esc(kit.id)}">Download .md</button>`
                 : ""
             }
           </div>
         </div>
-        ${
-          resource.document
-            ? editing
-              ? `<textarea class="doc-editor" data-draft="doc-${esc(resource.id)}" data-doc-id="${esc(resource.id)}" rows="24">${esc(resource.document)}</textarea>`
-              : `<article class="md">${md.render(resource.document)}</article>`
-            : `<div class="empty">
-                 <h3>No document yet</h3>
-                 <p class="muted">${processing ? "This resource is being processed." : "Processing did not finish. Re-run extraction to build the study document."}</p>
-               </div>`
-        }
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Practice questions</h2>
-          <div class="row tight">
-            ${resource.document ? `<button class="btn small" data-action="make-quiz" data-id="${esc(resource.id)}">${resource.quiz ? "Regenerate" : "Generate questions"}</button>` : ""}
-            ${
-              resource.quiz
-                ? `<button class="btn small" data-action="download-quiz" data-id="${esc(resource.id)}">Download .md</button>`
-                : ""
-            }
-          </div>
-        </div>
-        ${renderQuiz(resource)}
+        ${quiz && missing > 0 ? `<div class="notice subtle">${plural(missing, "newer document")} not covered yet — regenerate to include them.</div>` : ""}
+        ${quiz && quiz.truncated ? `<div class="notice subtle">The combined documents were long, so a proportional slice of each resource was used.</div>` : ""}
+        ${renderKitQuiz(kit)}
       </section>`;
-
-    return page;
   }
 
-  function renderQuiz(resource) {
-    if (!resource.quiz) {
-      return `<p class="muted small">${
-        resource.document
-          ? "Generate practice questions from the study document."
-          : "A study document is needed before questions can be generated."
-      }</p>`;
+  function renderKitQuiz(kit) {
+    const quiz = kit.quiz;
+    if (!quiz) {
+      return `<p class="muted small">No questions yet. Generate a set and they will be saved with this study kit.</p>`;
     }
 
     const state = quizState;
-    const items = resource.quiz.items;
+    const items = quiz.items;
     const answered = Object.keys(state.selected).length + Object.keys(state.revealed).length;
 
     return `
       <div class="quiz-meta">
-        <span class="muted tiny">${items.length} question(s) · generated ${esc(relativeTime(resource.quiz.generatedAt))} · ${answered} answered</span>
+        <span class="muted tiny">${plural(items.length, "question")} · generated ${esc(relativeTime(quiz.generatedAt))} · ${answered} answered</span>
       </div>
       <ol class="quiz">
         ${items
@@ -530,6 +563,93 @@
           })
           .join("")}
       </ol>`;
+  }
+
+  function renderResourceRow(resource) {
+    const pages = resource.pages || {};
+    const meta = [];
+    if (resource.type === "pdf" && pages.total) {
+      meta.push(`${pages.total} page(s)`);
+      if (pages.ocrPages && pages.ocrPages.length) meta.push(`${pages.ocrPages.length} OCR'd`);
+    }
+    if (resource.document) meta.push(`${(resource.document.length / 1000).toFixed(1)}k chars`);
+
+    return `
+      <article class="res-row">
+        <span class="res-icon ${resource.type}">${resource.type === "pdf" ? "PDF" : "TXT"}</span>
+        <div class="res-main">
+          <a class="res-name" href="#/resource/${esc(resource.id)}">${esc(resource.name)}</a>
+          <p class="muted tiny">
+            ${esc(resource.statusMessage || meta.join(" · ") || "Waiting to process")}
+          </p>
+        </div>
+        <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
+        <button class="icon-btn danger" title="Delete" data-action="delete-resource" data-id="${esc(resource.id)}">×</button>
+      </article>`;
+  }
+
+  /* ------------------------------ resource ------------------------- */
+
+  function renderResource(resource) {
+    const kit = store.getKit(resource.kitId);
+    const pages = resource.pages || {};
+    const processing = resource.status === "processing";
+    const editing = editingDocId === resource.id;
+    const page = document.createElement("div");
+    page.className = "page";
+
+    page.innerHTML = `
+      <nav class="crumbs"><a href="#/">Dashboard</a><span>/</span><a href="#/kit/${esc(resource.kitId)}">${esc(kit ? kit.name : "Kit")}</a><span>/</span><span>${esc(resource.name)}</span></nav>
+      <header class="page-head">
+        <div>
+          <h1>${esc(resource.name)}</h1>
+          <p class="muted">
+            <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
+            ${resource.type === "pdf" ? ` · PDF${pages.total ? ` · ${pages.total} page(s)` : ""}` : " · pasted text"}
+            ${pages.ocrPages && pages.ocrPages.length ? ` · OCR pages ${pages.ocrPages.join(", ")}` : ""}
+            ${resource.document ? ` · updated ${esc(relativeTime(resource.documentUpdatedAt))}` : ""}
+          </p>
+        </div>
+        <div class="row">
+          <a class="btn" href="#/kit/${esc(resource.kitId)}/questions">Practice questions</a>
+          ${resource.type === "pdf" && !processing ? `<button class="btn" data-action="rerun-resource" data-id="${esc(resource.id)}">Re-run extraction</button>` : ""}
+          <button class="btn danger" data-action="delete-resource" data-id="${esc(resource.id)}">Delete</button>
+        </div>
+      </header>
+
+      ${resource.error ? `<div class="notice error"><strong>Processing failed.</strong> ${esc(resource.error)}</div>` : ""}
+      ${processing ? `<div class="notice"><strong>Working…</strong> ${esc(resource.statusMessage || "Processing this resource.")}</div>` : ""}
+      ${pages.gapNotes ? `<div class="notice subtle"><strong>Gap check:</strong> ${esc(pages.gapNotes)}</div>` : ""}
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Study document</h2>
+          <div class="row tight">
+            ${
+              resource.document
+                ? editing
+                  ? `<button class="btn primary small" data-action="save-doc" data-id="${esc(resource.id)}">Save</button>
+                     <button class="btn small" data-action="cancel-doc">Cancel</button>`
+                  : `<button class="btn small" data-action="edit-doc" data-id="${esc(resource.id)}">Edit</button>
+                     <button class="btn small" data-action="copy-doc" data-id="${esc(resource.id)}">Copy</button>
+                     <button class="btn small" data-action="download-doc" data-id="${esc(resource.id)}">Download .md</button>`
+                : ""
+            }
+          </div>
+        </div>
+        ${
+          resource.document
+            ? editing
+              ? `<textarea class="doc-editor" data-draft="doc-${esc(resource.id)}" data-doc-id="${esc(resource.id)}" rows="24">${esc(resource.document)}</textarea>`
+              : `<article class="md">${md.render(resource.document)}</article>`
+            : `<div class="empty">
+                 <h3>No document yet</h3>
+                 <p class="muted">${processing ? "This resource is being processed." : "Processing did not finish. Re-run extraction to build the study document."}</p>
+               </div>`
+        }
+      </section>`;
+
+    return page;
   }
 
   /* ------------------------------------------------------------------ *
@@ -830,7 +950,8 @@
               }
               filterClassId = null;
               editingDocId = null;
-              lastQuizResourceId = null;
+              lastQuizKey = null;
+              docViewId = null;
               location.hash = "#/";
               store.load();
               toast("All local data deleted.", "success");
@@ -849,11 +970,19 @@
     });
   }
 
-  function openQuizOptions(resourceId) {
+  function openQuizOptions(kitId) {
+    const kit = store.getKit(kitId);
+    if (!kit) return;
+    const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
+
     openModal({
       title: "Practice questions",
       confirmLabel: "Generate",
       body: `
+        <div class="notice subtle">
+          Questions are written from <strong>all ${plural(withDocs.length, "study document")}</strong> in
+          “${esc(kit.name)}”, so they cover the whole kit rather than one resource.
+        </div>
         <div class="field-row">
           <div class="field"><label for="quiz-count">How many questions</label>
             <select id="quiz-count">
@@ -869,12 +998,15 @@
           </div>
         </div>`,
       onConfirm: (root) => {
-        const resource = store.getResource(resourceId);
-        if (!resource) return false;
+        if (!withDocs.length) {
+          toast("Add a resource with a study document first.", "error");
+          return false;
+        }
         if (!requireKey()) return false;
         const count = Number(root.querySelector("#quiz-count").value);
+        const difficulty = root.querySelector("#quiz-level").value;
         quizState = { selected: {}, revealed: {} };
-        jobs.makeQuiz(resource, count);
+        jobs.makeQuiz(kit, count, difficulty);
         toast("Generating practice questions…");
       },
     });
@@ -944,9 +1076,13 @@
     }
   }
 
-  function quizToMarkdown(resource) {
-    const lines = [`# ${resource.name} — practice questions`, ""];
-    resource.quiz.items.forEach((item, index) => {
+  function quizToMarkdown(kit) {
+    const quiz = kit.quiz;
+    const lines = [`# ${kit.name} — practice questions`, ""];
+    if (quiz.sourceNames && quiz.sourceNames.length) {
+      lines.push(`Sources: ${quiz.sourceNames.join(", ")}`, "");
+    }
+    quiz.items.forEach((item, index) => {
       lines.push(`**${index + 1}. ${item.question}**`);
       if (item.type === "mcq") {
         item.options.forEach((option, optionIndex) => {
@@ -1004,7 +1140,7 @@
         if (!kit) break;
         openModal({
           title: "Delete study kit",
-          body: `<p>Delete <strong>${esc(kit.name)}</strong> and its ${store.resourcesInKit(id).length} resource(s)? This cannot be undone.</p>`,
+          body: `<p>Delete <strong>${esc(kit.name)}</strong> and its ${plural(store.resourcesInKit(id).length, "resource")}? This cannot be undone.</p>`,
           confirmLabel: "Delete kit",
           danger: true,
           onConfirm: () => {
@@ -1096,14 +1232,22 @@
         if (resource) download(safeFileName(resource.name, "md"), resource.document, "text/markdown;charset=utf-8");
         break;
       }
-      case "make-quiz":
-        openQuizOptions(id);
-        break;
-      case "download-quiz": {
-        const resource = store.getResource(id);
-        if (resource && resource.quiz) download(safeFileName(resource.name + " questions", "md"), quizToMarkdown(resource), "text/markdown;charset=utf-8");
+      case "make-quiz": {
+        const kit = store.getKit(id);
+        if (kit) openQuizOptions(kit.id);
         break;
       }
+      case "download-quiz": {
+        const kit = store.getKit(id);
+        if (kit && kit.quiz) {
+          download(safeFileName(kit.name + " questions", "md"), quizToMarkdown(kit), "text/markdown;charset=utf-8");
+        }
+        break;
+      }
+      case "select-doc":
+        docViewId = id;
+        render();
+        break;
       case "answer-mcq": {
         const index = Number(actionEl.dataset.q);
         quizState.selected[index] = Number(actionEl.dataset.opt);
@@ -1198,7 +1342,7 @@
       try {
         const text = await file.text();
         const added = store.importData(text);
-        toast(`Imported ${added.kits} kit(s), ${added.resources} resource(s).`, "success");
+        toast(`Imported ${plural(added.kits, "kit")} and ${plural(added.resources, "resource")}.`, "success");
       } catch (error) {
         toast(error.message || "Could not import that file.", "error");
       }
