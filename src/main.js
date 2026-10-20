@@ -26,6 +26,7 @@ const studyLevel = byId("study-level");
 const subjectInput = byId("subject");
 const generateNotesButton = byId("generate-notes");
 const clearKeyButton = byId("clear-key");
+const cancelNotesButton = byId("cancel-notes");
 const aiStatus = byId("ai-status");
 const notesOutput = byId("notes-output");
 const copyNotesButton = byId("copy-notes");
@@ -70,6 +71,7 @@ function updateNotesControls() {
   copyNotesButton.disabled = !hasNotes;
   downloadNotesButton.disabled = !hasNotes;
   generateNotesButton.disabled = generatingNotes || !output.value.trim() || !apiKeyInput.value.trim();
+  cancelNotesButton.disabled = !generatingNotes;
 }
 function appendText(text) {
   output.value += text;
@@ -147,6 +149,13 @@ cancelButton.addEventListener("click", () => {
   setStatus("Cancelling after the current OCR operation…");
 });
 generateNotesButton.addEventListener("click", generateStudyNotes);
+cancelNotesButton.addEventListener("click", () => {
+  if (!generatingNotes || !notesController) return;
+  notesCancelled = true;
+  notesController.abort();
+  cancelNotesButton.disabled = true;
+  setAiStatus("Cancelling note generation…");
+});
 
 async function initialise() {
   try {
