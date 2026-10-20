@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101413">
+  <title>Symus Study — PDF OCR</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101413;--panel:#191e1c;--panel2:#202724;--line:#343d38;--text:#e8eee9;--muted:#9aa79f;--accent:#72d6ad;--accent2:#2d8d6b;--danger:#ff8b8b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}
+    main{width:min(1100px,calc(100% - 32px));margin:36px auto 64px}.top{margin-bottom:24px}.eyebrow{color:var(--accent);font-size:.78rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
+    h1{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.1;margin:8px 0}.sub{color:var(--muted);max-width:700px;margin:0}
+    .layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:18px;align-items:start}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;min-width:0}
+    h2{font-size:1rem;margin:0 0 14px}.field{display:grid;gap:7px;margin:15px 0}.field label,.label{font-weight:650;font-size:.88rem}.hint,.muted{color:var(--muted);font-size:.82rem}
+    input[type=file],select,button{font:inherit}input[type=file]{width:100%;padding:12px;border:1px dashed #53645a;border-radius:10px;background:var(--panel2);color:var(--text)}
+    select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px}
+    input[type=range]{width:100%;accent-color:var(--accent)}.range-row{display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem}
+    .check{display:flex;gap:9px;align-items:center;margin:12px 0}.check input{accent-color:var(--accent)}
+    .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}button{border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text);padding:10px 13px;cursor:pointer;font-weight:650}
+    button.primary{background:var(--accent);color:#092017;border-color:var(--accent)}button:disabled{opacity:.45;cursor:not-allowed}button:hover:not(:disabled){filter:brightness(1.08)}
+    .status{padding:12px;border-radius:10px;background:var(--panel2);color:var(--muted);font-size:.88rem;margin-top:16px;overflow-wrap:anywhere}.status.error{color:var(--danger)}
+    progress{width:100%;height:8px;accent-color:var(--accent);margin-top:10px}.result-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .result-head h2{margin:0}.stats{color:var(--muted);font-size:.82rem}textarea{display:block;width:100%;min-height:440px;resize:vertical;background:#0c100e;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:14px;font: .9rem/1.65 ui-monospace,SFMono-Regular,monospace;margin-top:14px}
+    .privacy{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;color:var(--muted);font-size:.8rem}.privacy strong{color:var(--text)}
+    @media(max-width:760px){main{margin-top:22px}.layout{grid-template-columns:1fr}.panel{padding:16px}textarea{min-height:320px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div class="eyebrow">Symus Study · Study tools</div>
+    <h1>PDF text extractor</h1>
+    <p class="sub">Turn scanned notes and image-based PDFs into editable text with Tesseract OCR, powered by ARCH.js.</p>
+  </header>
+  <div class="layout">
+    <section class="panel" aria-labelledby="settings-title">
+      <h2 id="settings-title">Document & settings</h2>
+      <div class="field">
+        <label for="pdf-file">PDF document</label>
+        <input id="pdf-file" type="file" accept=".pdf,application/pdf">
+        <span id="file-info" class="hint">Choose a PDF from your device.</span>
+      </div>
+      <div class="field">
+        <label for="language">OCR language</label>
+        <select id="language">
+          <option value="eng">English</option>
+          <option value="jpn">Japanese</option>
+          <option value="eng+jpn">English + Japanese</option>
+          <option value="chi_sim">Chinese (Simplified)</option>
+          <option value="fra">French</option>
+          <option value="deu">German</option>
+          <option value="spa">Spanish</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="scale">Render quality</label>
+        <input id="scale" type="range" min="1" max="3" step=".25" value="2">
+        <div class="range-row"><span>Faster</span><strong id="scale-value">2×</strong><span>Sharper</span></div>
+        <span class="hint">Higher quality can improve recognition but uses more memory.</span>
+      </div>
+      <div class="field">
+        <label for="pages">Pages to process</label>
+        <select id="pages"><option value="all">All pages</option><option value="first">First page only</option></select>
+      </div>
+      <label class="check"><input id="preserve-layout" type="checkbox" checked> Add page headings to the output</label>
+      <div class="actions">
+        <button id="start" class="primary" disabled>Extract text</button>
+        <button id="cancel" disabled>Cancel</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">Loading ARCH.js OCR dependencies…</div>
+      <progress id="progress" max="100" value="0" aria-label="OCR progress"></progress>
+      <div class="privacy"><strong>Privacy:</strong> your PDF is processed locally in this browser tab. ARCH.js, PDF.js, Tesseract.js and language data are downloaded from online CDNs as needed.</div>
+    </section>
+    <section class="panel" aria-labelledby="results-title">
+      <div class="result-head"><h2 id="results-title">Extracted text</h2><span id="stats" class="stats">No text yet</span></div>
+      <textarea id="output" placeholder="Your recognised text will appear here…" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="copy" disabled>Copy text</button>
+        <button id="download" disabled>Download .txt</button>
+        <button id="clear">Clear</button>
+      </div>
+    </section>
+  </div>
+</main>
+<script src="https://chibbit-99.github.io/arch.js/releases/latest.js"></script>
+</body>
+</html>
