@@ -1,7 +1,7 @@
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
 const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/+esm";
-const NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const WORKER_URL = "https://symus-backend.chibbit99.workers.dev";
 const NIM_MODEL = "google/diffusiongemma-26b-a4b-it";
 const NOTE_CHUNK_SIZE = 14000;
 
@@ -318,7 +318,7 @@ function buildNotesPrompt(sourceText, part, total) {
 }
 
 async function requestNotes(apiKey, prompt, signal) {
-  const response = await fetch(NIM_URL, {
+  const response = await fetch(WORKER_URL + "/api/notes", {
     method: "POST",
     headers: {
       "Authorization": "Bearer " + apiKey,
