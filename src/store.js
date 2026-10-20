@@ -67,6 +67,7 @@
         subject: str(item.subject),
         createdAt: str(item.createdAt, now()),
         updatedAt: str(item.updatedAt, now()),
+        quiz: normaliseQuiz(item.quiz),
       }));
 
     const kitIds = new Set(next.kits.map((k) => k.id));
@@ -87,8 +88,17 @@
         pages: normalisePages(item.pages),
         document: str(item.document),
         documentUpdatedAt: str(item.documentUpdatedAt),
-        quiz: normaliseQuiz(item.quiz),
       }));
+
+    // Migration: practice questions used to belong to a single resource. Move a
+    // surviving set up to its study kit instead of dropping it.
+    for (const kit of next.kits) {
+      if (kit.quiz) continue;
+      const legacy = arr(raw.resources)
+        .filter((item) => item && item.kitId === kit.id && item.quiz)
+        .sort((a, b) => str(b.updatedAt).localeCompare(str(a.updatedAt)))[0];
+      if (legacy) kit.quiz = normaliseQuiz(legacy.quiz);
+    }
 
     const settings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
     next.settings = {
@@ -123,7 +133,16 @@
         answer: str(item.answer),
         explanation: str(item.explanation),
       }));
-    return items.length ? { generatedAt: str(raw.generatedAt), items } : null;
+    if (!items.length) return null;
+    return {
+      generatedAt: str(raw.generatedAt),
+      items,
+      // Which resources the set was written from, so the UI can warn when a
+      // newer document is not covered yet.
+      sourceCount: Number.isFinite(raw.sourceCount) ? raw.sourceCount : 0,
+      sourceNames: arr(raw.sourceNames).filter((name) => typeof name === "string"),
+      truncated: raw.truncated === true,
+    };
   }
 
   /* ------------------------------------------------------------------ *
@@ -232,6 +251,7 @@
       subject: str(subject).trim(),
       createdAt: now(),
       updatedAt: now(),
+      quiz: null,
     };
     state.kits.push(kit);
     commit();
@@ -278,7 +298,6 @@
       pages: normalisePages(null),
       document: "",
       documentUpdatedAt: "",
-      quiz: null,
     };
     state.resources.push(resource);
     touchKit(kitId);
@@ -291,7 +310,6 @@
     if (!resource) return null;
     for (const [key, value] of Object.entries(patch)) {
       if (key === "pages") resource.pages = normalisePages(value);
-      else if (key === "quiz") resource.quiz = normaliseQuiz(value);
       else if (key === "id" || key === "kitId" || key === "createdAt") continue;
       else resource[key] = value;
     }
@@ -310,6 +328,15 @@
     touchKit(resource.kitId);
     commit();
     return resource;
+  }
+
+  function setKitQuiz(kitId, quiz) {
+    const kit = getKit(kitId);
+    if (!kit) return null;
+    kit.quiz = normaliseQuiz(quiz);
+    kit.updatedAt = now();
+    commit();
+    return kit;
   }
 
   function deleteResource(id) {
@@ -426,6 +453,7 @@
     addResource,
     updateResource,
     setResourceDocument,
+    setKitQuiz,
     deleteResource,
     setApiKey,
     setSettings,

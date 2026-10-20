@@ -26,6 +26,16 @@ Open <http://localhost:8000>, open **Settings**, paste an NVIDIA NIM API key, an
 - **Search** (⌘K / Ctrl-K) matches kit names, subjects and resource names.
 - **Export / Import** a JSON backup of everything.
 
+### Study kit tabs
+
+Each study kit is split into three tabs (each with its own URL, so back/forward and bookmarks work):
+
+| Tab | URL | What it shows |
+| --- | --- | --- |
+| **Resources** | `#/kit/<id>` | Add PDFs/pasted text and see every resource with its status. |
+| **Study documents** | `#/kit/<id>/documents` | Read the generated document for any resource in the kit, with copy/download. |
+| **Practice questions** | `#/kit/<id>/questions` | Questions written from **all** documents in the kit. |
+
 ### Study kits and resources
 
 A resource is either a **PDF** or **pasted text**. Adding one runs the extraction pipeline:
@@ -62,17 +72,25 @@ sections, each of which becomes part of one complete Markdown study document.
 - Copy or download as `.md`.
 - The document is saved to `localStorage`; **the uploaded file and its raw extracted text are not**.
 
-### Practice questions
+### Practice questions (per study kit)
 
-Choose 5–25 questions and a difficulty; the model writes a mix of multiple-choice and short-answer
-questions from the study document. Answer MCQs inline (immediate right/wrong marking plus an
-explanation), reveal model answers for short questions, and download the set as Markdown.
+Questions belong to the whole **study kit**, not to a single resource: every study document in the kit
+is combined and sent to the model together, so the set tests the kit as a whole.
+
+- Choose 5–25 questions and a difficulty; the model writes a mix of multiple-choice and short-answer
+  questions and is told to cover every resource in proportion to its size.
+- Very large kits are sampled rather than cut off at the front: each resource contributes a
+  proportional slice (up to ~60 000 characters in total), and the questions tab says so.
+- The tab records which resources the current set was built from and warns when a newer document is
+  not covered yet — regenerate to include it.
+- Answer MCQs inline (immediate right/wrong marking plus an explanation), reveal model answers for
+  short questions, and download the set as Markdown.
 
 ## Data and privacy
 
 | Data | Where it lives |
 | --- | --- |
-| Classes, kits, resources, documents, questions | `localStorage` under `symus.study.v1` |
+| Classes, kits, resources, documents, questions | `localStorage` under `symus.study.v1` (questions live on the kit) |
 | NVIDIA NIM API key | `localStorage` (same key), sent only with your requests |
 | Uploaded PDFs and their raw extracted text | memory only, discarded when processing ends |
 | Generated documents / questions | `localStorage` — use **Export** regularly |
