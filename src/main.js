@@ -1,5 +1,6 @@
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
 const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/+esm";
 const NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const NIM_MODEL = "google/diffusiongemma-26b-a4b-it";
 const NOTE_CHUNK_SIZE = 14000;
@@ -80,6 +81,15 @@ function appendText(text) {
 function loadScriptModule(url) {
   return import(url);
 }
+
+window.addEventListener("error", (event) => {
+  console.error("[Symus Study] Uncaught browser error:", event.error || event.message);
+  if (statusBox && !pdfjs) setStatus("App startup error: " + (event.message || "A script failed to load. Check the browser console and network access."), true);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("[Symus Study] Unhandled promise rejection:", event.reason);
+  if (statusBox && !pdfjs) setStatus("App startup error: " + (event.reason && event.reason.message ? event.reason.message : String(event.reason)), true);
+});
 function downloadText(content, filename, type = "text/plain;charset=utf-8") {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -159,20 +169,17 @@ cancelNotesButton.addEventListener("click", () => {
 
 async function initialise() {
   try {
-    if (typeof importPackage !== "function") {
-      throw new Error("ARCH.js package loader was not found. Open this app through a static web server and check that ARCH.js loaded successfully.");
-    }
     setStatus("Loading PDF.js and Tesseract.js…");
     [pdfjs, tesseract] = await Promise.all([
       loadScriptModule(PDFJS_URL),
-      importPackage("tesseract.js@6.0.1")
+      loadScriptModule(TESSERACT_URL)
     ]);
     pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
     setStatus("Ready. Select a PDF to begin.");
     setBusy(false);
   } catch (error) {
     console.error("[Symus Study OCR] Initialisation failed:", error);
-    setStatus("Could not load OCR dependencies: " + (error && error.message ? error.message : String(error)), true);
+    setStatus("Could not load OCR dependencies. Check your internet connection, CDN access, and the browser console. Details: " + (error && error.message ? error.message : String(error)), true);
   }
 }
 
