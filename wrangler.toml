@@ -1,0 +1,9 @@
+name = "symus-backend"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# Comma-separated allowed browser origins. localhost / 127.0.0.1 / [::1] on any
+# port is always allowed so the app can be run with `python3 -m http.server`.
+[vars]
+SYMUS_ORIGIN = "https://chibbit-99.github.io"
+SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"

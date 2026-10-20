@@ -1,102 +1,360 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101413">
-  <title>Symus Study — OCR & AI Notes</title>
-  <style>
-    :root{color-scheme:dark;--bg:#101413;--panel:#191e1c;--panel2:#202724;--line:#343d38;--text:#e8eee9;--muted:#9aa79f;--accent:#72d6ad;--accent2:#2d8d6b;--danger:#ff8b8b}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}
-    main{width:min(1100px,calc(100% - 32px));margin:36px auto 64px}.top{margin-bottom:24px}.eyebrow{color:var(--accent);font-size:.78rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
-    h1{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.1;margin:8px 0}.sub{color:var(--muted);max-width:700px;margin:0}
-    .layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:18px;align-items:start}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;min-width:0}
-    h2{font-size:1rem;margin:0 0 14px}.field{display:grid;gap:7px;margin:15px 0}.field label,.label{font-weight:650;font-size:.88rem}.hint,.muted{color:var(--muted);font-size:.82rem}
-    input[type=file],input[type=password],input[type=text],select,button{font:inherit}input[type=file],input[type=password],input[type=text]{width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}
-    input[type=file]{border-style:dashed;border-color:#53645a}select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px}
-    input[type=range]{width:100%;accent-color:var(--accent)}.range-row{display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem}
-    .check{display:flex;gap:9px;align-items:center;margin:12px 0}.check input{accent-color:var(--accent)}
-    .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}button{border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text);padding:10px 13px;cursor:pointer;font-weight:650}
-    button.primary{background:var(--accent);color:#092017;border-color:var(--accent)}button:disabled{opacity:.45;cursor:not-allowed}button:hover:not(:disabled){filter:brightness(1.08)}
-    .status{padding:12px;border-radius:10px;background:var(--panel2);color:var(--muted);font-size:.88rem;margin-top:16px;overflow-wrap:anywhere}.status.error{color:var(--danger)}
-    progress{width:100%;height:8px;accent-color:var(--accent);margin-top:10px}.result-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-    .result-head h2{margin:0}.stats{color:var(--muted);font-size:.82rem}textarea{display:block;width:100%;min-height:330px;resize:vertical;background:#0c100e;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:14px;font:.9rem/1.65 ui-monospace,SFMono-Regular,monospace;margin-top:14px}
-    .privacy{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;color:var(--muted);font-size:.8rem}.privacy strong{color:var(--text)}
-    .stack{display:grid;gap:18px}.wide{grid-column:1/-1}.section-title{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.section-title h2{margin:0}.tag{color:var(--accent);font-size:.78rem;font-weight:700}
-    @media(max-width:760px){main{margin-top:22px}.layout{grid-template-columns:1fr}.panel{padding:16px}textarea{min-height:260px}.wide{grid-column:auto}}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0c0f0e">
+<title>Symus Study — study kits &amp; AI notes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2372d6ad'/%3E%3Cpath d='M10 21c2 2 8 2 10-1 1.6-2.4-1-4-4-4.6-3-.6-4.6-2-3.4-4C13.8 9 19 9 21 11' stroke='%230c0f0e' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0c0f0e; --bg-2:#111514; --panel:#151a18; --panel-2:#1b211f; --panel-3:#222927;
+    --line:#28302d; --line-2:#33403b;
+    --text:#e9eeeb; --muted:#96a29c; --muted-2:#6f7d76;
+    --accent:#72d6ad; --accent-dim:#2f6f57; --accent-ink:#08130f;
+    --danger:#ff8f86; --danger-dim:#5a2723; --warn:#f0c674;
+    --radius:14px; --radius-sm:10px;
+    --shadow:0 18px 40px -24px rgba(0,0,0,.9);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:radial-gradient(1200px 800px at 90% -10%,#16201c 0%,var(--bg) 55%) no-repeat var(--bg);
+    color:var(--text);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{margin:0;line-height:1.2;font-weight:660;letter-spacing:-.01em}
+  h1{font-size:clamp(1.5rem,2.4vw,2rem)}
+  h2{font-size:1.02rem}
+  h3{font-size:.95rem}
+  p{margin:0}
+  a{color:inherit;text-decoration:none}
+  .muted{color:var(--muted)}
+  .small{font-size:.86rem}
+  .tiny{font-size:.78rem}
+  .danger{color:var(--danger)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .row.tight{gap:6px}
+  .row.center{justify-content:center}
+  .stack{display:grid;gap:18px}
+
+  /* layout */
+  .app{display:grid;grid-template-columns:264px minmax(0,1fr);min-height:100vh}
+  .sidebar{
+    position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;
+    padding:22px 16px;background:linear-gradient(180deg,#101513,#0b0e0d 90%);
+    border-right:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:720;letter-spacing:-.02em;font-size:1.05rem;padding:4px 6px}
+  .brand-mark{width:26px;height:26px;border-radius:8px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:800;font-size:.9rem}
+  .brand span{color:var(--muted);font-weight:600}
+  .nav-label{font-size:.72rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted-2);padding:0 8px}
+  .nav{display:grid;gap:2px;overflow:auto;flex:1;align-content:start}
+  .nav-item{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;
+    padding:8px 10px;border:0;border-radius:9px;background:transparent;color:var(--muted);
+    font:inherit;font-size:.9rem;text-align:left;cursor:pointer;
+  }
+  .nav-item:hover{background:var(--panel-2);color:var(--text)}
+  .nav-item.active{background:var(--panel-3);color:var(--text)}
+  .nav-item .count{font-size:.75rem;color:var(--muted-2)}
+  .nav-add{color:var(--accent)}
+  .sidebar-foot{display:grid;gap:10px;border-top:1px solid var(--line);padding-top:14px}
+  .storage{display:grid;gap:6px;padding:0 4px}
+  .storage-row{display:flex;justify-content:space-between;font-size:.76rem;color:var(--muted)}
+  .meter{height:6px;border-radius:99px;background:var(--panel-3);overflow:hidden}
+  .meter > span{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .3s ease}
+
+  .content{min-width:0;display:flex;flex-direction:column}
+  .topbar{
+    position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;
+    padding:14px 26px;background:rgba(12,15,14,.82);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .search{flex:1;max-width:520px}
+  .search input{
+    width:100%;padding:9px 13px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);font:inherit;font-size:.9rem;
+  }
+  .search input::placeholder{color:var(--muted-2)}
+  .top-actions{display:flex;gap:8px;margin-left:auto}
+  .menu-btn{display:none}
+  .view{padding:26px;max-width:1180px;width:100%;margin:0 auto;flex:1}
+
+  /* buttons */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    padding:9px 14px;border-radius:10px;border:1px solid var(--line-2);
+    background:var(--panel-2);color:var(--text);font:inherit;font-size:.88rem;font-weight:620;
+    cursor:pointer;transition:background .15s,border-color .15s,transform .1s;
+  }
+  .btn:hover:not(:disabled){background:var(--panel-3);border-color:#3e4b46}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn.primary:hover:not(:disabled){background:#85e3bb;border-color:#85e3bb}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+  .btn.ghost:hover:not(:disabled){background:var(--panel-2);color:var(--text)}
+  .btn.small{padding:6px 10px;font-size:.8rem;border-radius:8px}
+  .btn.full{width:100%}
+  .btn.danger{color:var(--danger)}
+  .btn.danger-solid{background:var(--danger);border-color:var(--danger);color:#1b0a08}
+  .icon-btn{
+    width:30px;height:30px;display:grid;place-items:center;border-radius:8px;border:0;
+    background:transparent;color:var(--muted);font-size:1.05rem;line-height:1;cursor:pointer;
+  }
+  .icon-btn:hover{background:var(--panel-2);color:var(--text)}
+  .icon-btn.danger:hover{color:var(--danger)}
+
+  /* page furniture */
+  .page{display:grid;gap:18px}
+  .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  .page-head p{margin-top:4px}
+  .eyebrow{color:var(--accent);font-size:.72rem;font-weight:760;letter-spacing:.14em;text-transform:uppercase}
+  .crumbs{display:flex;gap:8px;align-items:center;font-size:.8rem;color:var(--muted-2);flex-wrap:wrap}
+  .crumbs a{color:var(--muted)}
+  .crumbs a:hover{color:var(--text)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;min-width:0}
+  .panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .panel-head h2{margin:0}
+  .count{font-size:.75rem;color:var(--muted-2);background:var(--panel-2);border:1px solid var(--line);padding:1px 8px;border-radius:99px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:grid;gap:8px}
+  .card:hover{border-color:var(--line-2)}
+  .kit-card{min-height:148px;align-content:start}
+  .kit-card h3 a:hover{color:var(--accent)}
+  .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .card-foot{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+  .class-group{display:grid;gap:10px}
+  .class-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 2px}
+  .class-head h2{font-size:.95rem}
+  .kit-layout{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:18px;align-items:start}
+
+  .chip{font-size:.72rem;font-weight:650;color:var(--accent);background:rgba(114,214,173,.1);border:1px solid rgba(114,214,173,.25);padding:2px 8px;border-radius:99px;white-space:nowrap}
+  .badge{font-size:.72rem;font-weight:650;padding:2px 9px;border-radius:99px;background:var(--panel-3);color:var(--muted);white-space:nowrap}
+  .badge.ready{background:rgba(114,214,173,.12);color:var(--accent)}
+  .badge.processing{background:rgba(240,198,116,.12);color:var(--warn)}
+  .badge.error{background:rgba(255,143,134,.12);color:var(--danger)}
+
+  .empty{display:grid;gap:8px;justify-items:center;text-align:center;padding:32px 18px;border:1px dashed var(--line-2);border-radius:var(--radius);color:var(--muted)}
+  .empty.hero{padding:56px 24px;background:radial-gradient(600px 200px at 50% 0%,rgba(114,214,173,.07),transparent)}
+  .empty h2,.empty h3{color:var(--text)}
+
+  .dropzone{
+    display:grid;gap:6px;justify-items:center;text-align:center;padding:22px 16px;
+    border:1.5px dashed var(--line-2);border-radius:12px;transition:border-color .15s,background .15s;
+  }
+  .dropzone.dragging{border-color:var(--accent);background:rgba(114,214,173,.06)}
+  .divider{display:flex;align-items:center;gap:10px;margin:18px 0 6px;color:var(--muted-2);font-size:.78rem}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .field{display:grid;gap:6px;margin:12px 0}
+  .field label,.label{font-weight:640;font-size:.85rem}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .hint{color:var(--muted-2);font-size:.78rem}
+  input[type=text],input[type=password],input[type=search],select,textarea{
+    width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--text);font:inherit;font-size:.9rem;
+  }
+  textarea{resize:vertical;line-height:1.6}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-dim);outline-offset:1px;border-color:var(--accent-dim)}
+
+  /* resources */
+  .res-list{display:grid;gap:8px}
+  .res-row{display:flex;align-items:center;gap:10px;padding:10px;border-radius:11px;background:var(--panel-2);border:1px solid transparent}
+  .res-row:hover{border-color:var(--line-2)}
+  .res-icon{flex:0 0 auto;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;font-size:.64rem;font-weight:800;letter-spacing:.04em;background:var(--panel-3);color:var(--muted)}
+  .res-icon.pdf{background:rgba(255,143,134,.12);color:#ffb0a8}
+  .res-icon.text{background:rgba(114,214,173,.12);color:var(--accent)}
+  .res-main{flex:1;min-width:0;display:grid;gap:2px}
+  .res-name{font-weight:640;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .res-name:hover{color:var(--accent)}
+  .res-main p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .notice{padding:11px 13px;border-radius:10px;border:1px solid var(--line-2);background:var(--panel-2);font-size:.86rem;color:var(--muted)}
+  .notice strong{color:var(--text)}
+  .notice.error{border-color:var(--danger-dim);background:rgba(255,143,134,.07);color:#ffc3bd}
+  .notice.subtle{background:transparent;border-color:var(--line)}
+  .notice.error-soft{border-color:var(--danger-dim);background:rgba(255,143,134,.05);display:grid;gap:6px;justify-items:start}
+
+  /* markdown */
+  .md{max-width:74ch;font-size:.94rem;line-height:1.68}
+  .md > * + *{margin-top:.7em}
+  .md h2{font-size:1.22rem;margin-top:1.5em}
+  .md h3{font-size:1.05rem;margin-top:1.3em;color:#d7e5dd}
+  .md h4{font-size:.96rem;margin-top:1.2em;color:#c6d6ce}
+  .md ul,.md ol{padding-left:1.35em;margin:.4em 0}
+  .md li+li{margin-top:.25em}
+  .md blockquote{margin:0;padding:8px 14px;border-left:3px solid var(--accent-dim);background:var(--panel-2);border-radius:0 8px 8px 0;color:var(--muted)}
+  .md code{background:var(--panel-3);padding:1px 5px;border-radius:5px;font:.86em ui-monospace,SFMono-Regular,Menlo,monospace}
+  .md pre{background:#0a0d0c;border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto}
+  .md pre code{background:none;padding:0}
+  .md hr{border:0;border-top:1px solid var(--line);margin:1.6em 0}
+  .md a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+  .md strong{color:#fff;font-weight:680}
+  .doc-editor{font:.88rem/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;min-height:380px}
+
+  /* quiz */
+  .quiz{display:grid;gap:16px;padding-left:22px;margin:0}
+  .quiz .q{display:grid;gap:10px}
+  .q-text{font-weight:620}
+  .options{display:grid;gap:7px}
+  .option{
+    display:flex;gap:10px;align-items:flex-start;text-align:left;width:100%;
+    padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--text);font:inherit;font-size:.88rem;cursor:pointer;
+  }
+  .option:hover{border-color:var(--line-2);background:var(--panel-3)}
+  .option.correct{border-color:var(--accent-dim);background:rgba(114,214,173,.1)}
+  .option.wrong{border-color:var(--danger-dim);background:rgba(255,143,134,.08)}
+  .opt-letter{flex:0 0 auto;width:20px;height:20px;border-radius:6px;background:var(--panel-3);display:grid;place-items:center;font-size:.72rem;font-weight:700;color:var(--muted)}
+  .explanation{color:var(--muted);font-size:.84rem;border-left:2px solid var(--line-2);padding-left:10px}
+  .answer{background:rgba(114,214,173,.07);border:1px solid rgba(114,214,173,.2);border-radius:9px;padding:9px 11px;font-size:.88rem}
+  .quiz-meta{display:flex;justify-content:space-between;margin-bottom:10px}
+
+  /* job bar */
+  .job-bar{
+    position:fixed;right:22px;bottom:22px;z-index:40;width:min(420px,calc(100vw - 44px));
+    display:grid;gap:9px;padding:14px 16px;border-radius:14px;
+    background:rgba(21,26,24,.97);border:1px solid var(--line-2);box-shadow:var(--shadow);
+  }
+  .job-bar[hidden]{display:none}
+  .job-info{display:grid;gap:4px}
+  .job-title{font-weight:660;font-size:.9rem}
+  .job-step{color:var(--muted);font-size:.8rem}
+  .job-bar .btn{justify-self:end}
+
+  /* toasts */
+  .toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:60;display:grid;gap:8px;justify-items:center;pointer-events:none}
+  .toast{
+    padding:9px 15px;border-radius:99px;background:var(--panel-3);border:1px solid var(--line-2);
+    font-size:.86rem;box-shadow:var(--shadow);animation:toast-in .18s ease-out;
+  }
+  .toast.success{border-color:var(--accent-dim);color:#c8f3e1}
+  .toast.error{border-color:var(--danger-dim);color:#ffc9c4}
+  .toast.leaving{opacity:0;transform:translateY(6px);transition:all .25s}
+  @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  /* modal */
+  .modal-root{position:fixed;inset:0;z-index:70;display:grid;place-items:center}
+  .modal-root[hidden]{display:none}
+  .modal-backdrop{position:absolute;inset:0;background:rgba(4,6,5,.7);backdrop-filter:blur(3px)}
+  .modal{
+    position:relative;width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 60px);overflow:auto;
+    background:var(--panel);border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow);
+    display:grid;gap:0;
+  }
+  .modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 20px 0}
+  .modal-body{padding:16px 20px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
+
+  @media (max-width:980px){
+    .kit-layout{grid-template-columns:1fr}
+    .field-row{grid-template-columns:1fr}
+  }
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr}
+    .sidebar{
+      position:fixed;inset:0 auto 0 0;width:264px;height:100vh;transform:translateX(-102%);
+      transition:transform .2s ease;z-index:50;
+    }
+    body.nav-open .sidebar{transform:none}
+    .menu-btn{display:grid}
+    .topbar{padding:12px 16px;flex-wrap:wrap}
+    .search{order:3;flex-basis:100%;max-width:none}
+    .view{padding:18px 16px 90px}
+    .top-actions .btn.ghost{display:none}
+    .job-bar{right:12px;left:12px;width:auto;bottom:12px}
+  }
+</style>
 </head>
 <body>
-<main>
-  <header class="top">
-    <div class="eyebrow">Symus Study · Study tools</div>
-    <h1>Turn documents into study notes</h1>
-    <p class="sub">Extract text from scanned PDFs in your browser, then optionally use NVIDIA NIM and DiffusionGemma to turn that text into structured study notes.</p>
-  </header>
-  <div class="layout">
-    <section class="panel" aria-labelledby="settings-title">
-      <h2 id="settings-title">Document & OCR settings</h2>
-      <div class="field">
-        <label for="pdf-file">PDF document</label>
-        <input id="pdf-file" type="file" accept=".pdf,application/pdf">
-        <span id="file-info" class="hint">Choose a PDF from your device.</span>
-      </div>
-      <div class="field">
-        <label for="language">OCR language</label>
-        <select id="language">
-          <option value="eng">English</option><option value="jpn">Japanese</option><option value="eng+jpn">English + Japanese</option>
-          <option value="chi_sim">Chinese (Simplified)</option><option value="fra">French</option><option value="deu">German</option><option value="spa">Spanish</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="scale">Render quality</label><input id="scale" type="range" min="1" max="3" step=".25" value="2">
-        <div class="range-row"><span>Faster</span><strong id="scale-value">2×</strong><span>Sharper</span></div>
-        <span class="hint">Higher quality can improve recognition but uses more memory.</span>
-      </div>
-      <div class="field"><label for="pages">Pages to process</label><select id="pages"><option value="all">All pages</option><option value="first">First page only</option></select></div>
-      <label class="check"><input id="preserve-layout" type="checkbox" checked> Add page headings to the output</label>
-      <div class="actions"><button id="start" class="primary" disabled>Extract text</button><button id="cancel" disabled>Cancel</button></div>
-      <div id="status" class="status" role="status" aria-live="polite">Loading ARCH.js OCR dependencies…</div>
-      <progress id="progress" max="100" value="0" aria-label="OCR progress"></progress>
-      <div class="privacy"><strong>OCR privacy:</strong> the PDF is processed locally in this browser tab. OCR libraries and language data are downloaded online as needed.</div>
-    </section>
-    <div class="stack">
-      <section class="panel" aria-labelledby="results-title">
-        <div class="result-head"><h2 id="results-title">Extracted text</h2><span id="stats" class="stats">No text yet</span></div>
-        <textarea id="output" placeholder="Your recognised text will appear here…"></textarea>
-        <div class="actions"><button id="copy" disabled>Copy text</button><button id="download" disabled>Download .txt</button><button id="clear">Clear</button></div>
-      </section>
-      <section class="panel" aria-labelledby="ai-title">
-        <div class="section-title"><h2 id="ai-title">Generate study notes</h2><span class="tag">NVIDIA NIM · DiffusionGemma</span></div>
-        <p class="muted">Use your own NVIDIA API key to turn the extracted text into revision-ready notes, key terms, examples and practice questions.</p>
-        <div class="field">
-          <label for="nim-key">NVIDIA NIM API key</label>
-          <input id="nim-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your NVIDIA API key">
-          <span class="hint">Kept in memory for this page only; it is not saved to local storage or sent anywhere except NVIDIA's inference API.</span>
-        </div>
-        <div class="field">
-          <label for="study-level">Notes style</label>
-          <select id="study-level">
-            <option value="concise">Concise revision notes</option>
-            <option value="detailed">Detailed notes with explanations</option>
-            <option value="exam">Exam-focused notes + likely questions</option>
-            <option value="flashcards">Flashcards (question and answer)</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="subject">Subject or focus (optional)</label>
-          <input id="subject" type="text" placeholder="e.g. Year 8 Geography — urban redevelopment">
-        </div>
-        <div class="actions"><button id="generate-notes" class="primary" disabled>Generate study notes</button><button id="cancel-notes" disabled>Cancel generation</button><button id="clear-key">Clear API key</button></div>
-        <div id="ai-status" class="status" role="status" aria-live="polite">Extract some text and enter your API key to begin.</div>
-        <textarea id="notes-output" placeholder="Your generated study notes will appear here…" spellcheck="false"></textarea>
-        <div class="actions"><button id="copy-notes" disabled>Copy notes</button><button id="download-notes" disabled>Download notes .md</button></div>
-        <div class="privacy"><strong>AI privacy:</strong> when you generate notes, extracted text and your API key are sent directly from your browser to <code>integrate.api.nvidia.com</code>. Do not use this with confidential documents. Your key is not stored by this page.</div>
-      </section>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#/"><span class="brand-mark">S</span>Symus <span>Study</span></a>
+    <div class="nav-label">Library</div>
+    <nav class="nav" id="nav-classes" aria-label="Classes"></nav>
+    <div class="sidebar-foot">
+      <div class="storage" id="storage-meter"></div>
+      <button class="btn ghost full" id="btn-settings">Settings</button>
     </div>
+  </aside>
+
+  <div class="content">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="btn-menu" aria-label="Open navigation">☰</button>
+      <div class="search"><input id="search" type="search" placeholder="Search study kits and resources…  (⌘K / Ctrl-K)"></div>
+      <div class="top-actions">
+        <button class="btn ghost" id="btn-export" title="Download a JSON backup">Export</button>
+        <button class="btn ghost" id="btn-import" title="Restore from a backup">Import</button>
+        <button class="btn primary" id="btn-new-kit">New kit</button>
+      </div>
+    </header>
+    <main class="view" id="view"></main>
   </div>
-</main>
+</div>
+
+<div class="job-bar" id="job-bar" hidden></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="modal-root" id="modal-root" hidden></div>
+<input type="file" id="pdf-file-input" accept=".pdf,application/pdf" multiple hidden>
+<input type="file" id="import-file" accept="application/json,.json" hidden>
+
+<!--
+  ARCH.js runtime (https://chibbit-99.github.io/arch.js/docs/).
+
+  ARCH.js fetches ./arch/config.json, loads the modules listed there
+  (npmloader.js), runs ./arch/init.js and waits for it, then executes the
+  project files in config.json -> "js" in order.
+
+  `latest.js` is used because the documented arch/init.js export syntax is only
+  supported by the current build; releases/v0.1.1-alpha.js executes init.js as a
+  plain async function, where `export const` is a syntax error.
+-->
 <script src="https://chibbit-99.github.io/arch.js/releases/latest.js"></script>
-<script type="module" src="./src/main.js"></script>
+<script>
+  // Fallback only for the case where ARCH.js itself never starts. Without it
+  // the page would stay inert if the runtime CDN is blocked or the runtime
+  // fails before reading arch/config.json. src/main.js refuses to run twice,
+  // so a late ARCH.js start cannot double-initialise the app.
+  (function () {
+    var done = false;
+
+    function loadDirectly(reason) {
+      if (done || window.__symusStudyBooted) return;
+      done = true;
+      console.warn("[Symus Study] " + reason + "; loading the project files directly.");
+      [
+        "./src/store.js",
+        "./src/markdown.js",
+        "./src/ocr.js",
+        "./src/ai.js",
+        "./src/jobs.js",
+        "./src/ui.js",
+        "./src/main.js",
+      ].forEach(function (src) {
+        var script = document.createElement("script");
+        script.src = src;
+        script.async = false; // keep the file order
+        document.body.appendChild(script);
+      });
+    }
+
+    setTimeout(function () {
+      if (window.__symusStudyBooted) return;
+      if (typeof globalThis.importPackage !== "function") loadDirectly("ARCH.js did not load");
+    }, 10000);
+
+    setTimeout(function () {
+      loadDirectly("ARCH.js did not finish starting");
+    }, 90000);
+
+    window.addEventListener("symus-study:booted", function () {
+      done = true;
+    });
+  })();
+</script>
 </body>
 </html>

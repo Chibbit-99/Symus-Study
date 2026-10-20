@@ -1,4 +1,12 @@
 {
   "modules": ["npmloader.js"],
-  "js": []
+  "js": [
+    "./src/store.js",
+    "./src/markdown.js",
+    "./src/ocr.js",
+    "./src/ai.js",
+    "./src/jobs.js",
+    "./src/ui.js",
+    "./src/main.js"
+  ]
 }
