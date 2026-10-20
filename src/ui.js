@@ -34,6 +34,8 @@
   let renderQueued = false;
   let pendingReprocessId = null;
   let lastQuizKey = null;
+  // Cached model catalogue for the Settings selector (per page load).
+  const modelCache = { models: [], loadedAt: 0 };
 
   const $ = (id) => document.getElementById(id);
 
@@ -398,7 +400,7 @@
           <div class="row">
             <button class="btn" data-action="add-text">Add pasted text</button>
           </div>
-          <p class="muted tiny">AI settings: ${esc(settings.ocrLanguage)} OCR · ${settings.ocrScale}× render. ${store.getApiKey() ? "NIM key saved." : '<span class="danger">No NIM key yet.</span>'}</p>
+          <p class="muted tiny">AI settings: ${esc(settings.model)} · ${esc(settings.ocrLanguage)} OCR · ${settings.ocrScale}× render. ${store.getApiKey() ? "NIM key saved." : '<span class="danger">No NIM key yet.</span>'}</p>
         </section>
 
         <section class="panel">
@@ -869,6 +871,91 @@
     });
   }
 
+  const CUSTOM_MODEL = "__custom__";
+
+  function modelFilterLabel() {
+    return Symus.ai.MODEL_FILTER.join(", ");
+  }
+
+  /** Options for the model select, always including the currently saved model. */
+  function modelOptionsHtml(currentModel) {
+    const cached = modelCache.models;
+    const ids = new Set([currentModel, Symus.ai.DEFAULT_MODEL, ...cached.map((model) => model.id)].filter(Boolean));
+    const options = [...ids]
+      .sort((a, b) => a.localeCompare(b))
+      .map(
+        (id) =>
+          `<option value="${esc(id)}" ${id === currentModel ? "selected" : ""}>${esc(id)}${
+            id === Symus.ai.DEFAULT_MODEL ? " (default)" : ""
+          }</option>`,
+      );
+    options.push(`<option value="${CUSTOM_MODEL}" ${ids.has(currentModel) ? "" : "selected"}>Custom model id…</option>`);
+    return options.join("");
+  }
+
+  /** Populate the select in an open settings modal. */
+  function fillModelOptions(root, currentModel, { keepCustom = false } = {}) {
+    const select = root.querySelector("#set-model");
+    if (!select) return;
+    const previous = keepCustom ? select.value : currentModel;
+    select.innerHTML = modelOptionsHtml(currentModel);
+    if (previous && [...select.options].some((option) => option.value === previous)) select.value = previous;
+    syncCustomInput(root);
+  }
+
+  function syncCustomInput(root) {
+    const select = root.querySelector("#set-model");
+    const input = root.querySelector("#set-model-custom");
+    if (!select || !input) return;
+    const custom = select.value === CUSTOM_MODEL;
+    input.hidden = !custom;
+    if (custom && !input.value) input.value = "";
+  }
+
+  function readModelField(root) {
+    const select = root.querySelector("#set-model");
+    const input = root.querySelector("#set-model-custom");
+    if (select && select.value === CUSTOM_MODEL) {
+      const custom = input ? input.value.trim() : "";
+      return custom;
+    }
+    return select ? select.value : "";
+  }
+
+  async function loadModelCatalogue(root, { key, statusEl, button }) {
+    const apiKey = (key || "").trim();
+    if (!apiKey) {
+      if (statusEl) statusEl.textContent = "Enter your NVIDIA API key first.";
+      return;
+    }
+    if (button) button.disabled = true;
+    if (statusEl) statusEl.textContent = "Loading models from NVIDIA…";
+
+    try {
+      const { models } = await Symus.ai.listModels({ apiKey });
+      modelCache.models = models;
+      modelCache.loadedAt = Date.now();
+      const saved = readModelField(root) || store.getSettings().model;
+      fillModelOptions(root, saved, { keepCustom: true });
+      if (statusEl) {
+        statusEl.textContent = models.length
+          ? `${models.length} model(s) available. Only ${modelFilterLabel()} models are listed.`
+          : `No models matched ${modelFilterLabel()}. Use a custom model id.`;
+      }
+      if (!models.length) {
+        const select = root.querySelector("#set-model");
+        if (select) {
+          select.value = CUSTOM_MODEL;
+          syncCustomInput(root);
+        }
+      }
+    } catch (error) {
+      if (statusEl) statusEl.textContent = "Could not load models: " + Symus.ai.describeError(error);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   function openSettings(note) {
     const settings = store.getSettings();
     openModal({
@@ -880,6 +967,16 @@
           <label for="set-key">NVIDIA NIM API key</label>
           <input id="set-key" type="password" autocomplete="off" spellcheck="false" value="${esc(settings.apiKey)}" placeholder="nvapi-…">
           <span class="hint">Saved in this browser's localStorage and sent only to the Symus Worker → NVIDIA NIM.</span>
+        </div>
+        <div class="field">
+          <label for="set-model">Model</label>
+          <select id="set-model">${modelOptionsHtml(settings.model)}</select>
+          <div class="row tight" style="margin-top:2px">
+            <button type="button" class="btn small" id="set-model-refresh">Load available models</button>
+            <span class="hint" id="set-model-status">Only ${esc(modelFilterLabel())} models are listed.</span>
+          </div>
+          <input id="set-model-custom" type="text" placeholder="vendor/model-id" hidden>
+          <span class="hint">The list comes from your NVIDIA account through the Symus Worker, filtered to the supported model families.</span>
         </div>
         <div class="field-row">
           <div class="field"><label for="set-lang">OCR language</label>
@@ -914,7 +1011,7 @@
         <div class="notice subtle">
           <strong>Build:</strong> ${esc((globalThis.SYMUS_CONFIG || {}).version || "unknown")}
           <span class="tiny">— if this is not the build you expect, hard-reload (Ctrl/Cmd-Shift-R).</span><br>
-          <strong>Model:</strong> ${esc(Symus.ai.MODEL)}<br>
+          <strong>Model:</strong> ${esc(settings.model)}<br>
           <strong>Storage:</strong> ${(store.storageBytes() / 1024).toFixed(0)} KB used in localStorage.
           Study documents and questions are saved locally; uploaded files and their raw text are never stored.
         </div>
@@ -936,6 +1033,24 @@
           toggle.textContent = show ? "Hide" : "Show";
         });
         keyInput.insertAdjacentElement("afterend", toggle);
+
+        const modelSelect = root.querySelector("#set-model");
+        const refresh = root.querySelector("#set-model-refresh");
+        const statusEl = root.querySelector("#set-model-status");
+
+        modelSelect.addEventListener("change", () => {
+          syncCustomInput(root);
+          const input = root.querySelector("#set-model-custom");
+          if (input && modelSelect.value === CUSTOM_MODEL) input.focus();
+        });
+        syncCustomInput(root);
+
+        refresh.addEventListener("click", () => loadModelCatalogue(root, { key: keyInput.value, statusEl, button: refresh }));
+
+        // Load the catalogue straight away when a key is already available.
+        if (keyInput.value.trim()) {
+          loadModelCatalogue(root, { key: keyInput.value, statusEl, button: refresh });
+        }
 
         root.querySelector("[data-clear-all]").addEventListener("click", () => {
           closeModal();
@@ -962,8 +1077,19 @@
         });
       },
       onConfirm: (root) => {
+        const model = readModelField(root);
+        if (!model) {
+          const input = root.querySelector("#set-model-custom");
+          if (input) {
+            input.hidden = false;
+            input.focus();
+          }
+          toast("Enter a model id, or pick one from the list.", "error");
+          return false;
+        }
         store.setSettings({
           apiKey: root.querySelector("#set-key").value,
+          model,
           ocrLanguage: root.querySelector("#set-lang").value,
           ocrScale: Number(root.querySelector("#set-scale").value),
         });

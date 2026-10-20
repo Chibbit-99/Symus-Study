@@ -31,11 +31,13 @@
       classes: [],
       kits: [],
       resources: [],
-      settings: { apiKey: "", ocrLanguage: "eng", ocrScale: 2 },
+      settings: { apiKey: "", model: DEFAULT_MODEL, ocrLanguage: "eng", ocrScale: 2 },
     };
   }
 
   const OCR_LANGUAGES = ["eng", "jpn", "eng+jpn", "chi_sim", "fra", "deu", "spa"];
+  const DEFAULT_MODEL =
+    (globalThis.SYMUS_CONFIG && globalThis.SYMUS_CONFIG.model) || "nvidia/nemotron-3.5-lightning-30b-a3b";
   const clampScale = (value) => {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(3, Math.max(1, number)) : 2;
@@ -103,6 +105,7 @@
     const settings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
     next.settings = {
       apiKey: str(settings.apiKey),
+      model: str(settings.model).trim() || DEFAULT_MODEL,
       ocrLanguage: OCR_LANGUAGES.includes(settings.ocrLanguage) ? settings.ocrLanguage : "eng",
       ocrScale: clampScale(settings.ocrScale),
     };
@@ -356,6 +359,7 @@
 
   function setSettings(patch = {}) {
     if ("apiKey" in patch) state.settings.apiKey = str(patch.apiKey).trim();
+    if ("model" in patch) state.settings.model = str(patch.model).trim() || DEFAULT_MODEL;
     if ("ocrLanguage" in patch) {
       state.settings.ocrLanguage = OCR_LANGUAGES.includes(patch.ocrLanguage) ? patch.ocrLanguage : "eng";
     }
@@ -459,6 +463,7 @@
     setSettings,
     getSettings,
     OCR_LANGUAGES,
+    DEFAULT_MODEL,
     getApiKey,
     exportData,
     importData,

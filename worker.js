@@ -3,24 +3,34 @@
  * Deployed at https://symus-backend.chibbit99.workers.dev
  *
  * Routes:
- *   GET  /health     - health check
- *   POST /api/notes  - forwards a request to NVIDIA NIM. The caller supplies
- *                      their own API key in the Authorization header; it is
- *                      forwarded upstream and never stored or logged here.
+ *   GET  /health      - health check
+ *   GET  /api/models  - lists the NVIDIA NIM models this app may use, filtered
+ *                       to the families configured below. The caller's key is
+ *                       forwarded upstream so NVIDIA decides what is visible to
+ *                       their account; nothing is stored or logged here.
+ *   POST /api/notes   - forwards a chat request to NVIDIA NIM. The caller
+ *                       supplies their own API key in the Authorization header.
  *
  * Configuration (wrangler.toml [vars] or the dashboard):
- *   SYMUS_ORIGIN  - comma-separated list of allowed browser origins.
- *                   Defaults to https://chibbit-99.github.io.
- *                   localhost / 127.0.0.1 / [::1] on any port is always
- *                   allowed so the app can be run over `python3 -m http.server`.
- *   SYMUS_MODELS  - comma-separated list of allowed model ids.
- *                   Defaults to nvidia/nemotron-3.5-lightning-30b-a3b.
+ *   SYMUS_ORIGIN        - comma-separated allowed browser origins.
+ *                         Defaults to https://chibbit-99.github.io.
+ *                         localhost / 127.0.0.1 / [::1] on any port is always
+ *                         allowed for local development.
+ *   SYMUS_MODEL_FILTER  - comma-separated substrings. A model id is offered (and
+ *                         accepted) only if it contains at least one of them.
+ *                         Default: deepseek,step,nemotron,mistral,gemma,glm,muse
+ *   SYMUS_MODELS        - optional extra comma-separated model ids that are
+ *                         allowed even if they match no filter substring.
  */
 
 const NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NIM_MODELS_ENDPOINT = "https://integrate.api.nvidia.com/v1/models";
 
 const DEFAULT_ALLOWED_ORIGINS = ["https://chibbit-99.github.io"];
-const DEFAULT_ALLOWED_MODELS = ["nvidia/nemotron-3.5-lightning-30b-a3b"];
+
+// Model families this app offers. Keep in sync with MODEL_FILTER in src/ai.js,
+// which filters defensively on the client too.
+const DEFAULT_MODEL_FILTER = ["deepseek", "step", "nemotron", "mistral", "gemma", "glm", "muse"];
 
 // Local development origins. Browsers send an Origin header for these too.
 const LOCAL_ORIGIN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/;
@@ -30,6 +40,21 @@ const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CHARS = 500_000;
 const MAX_OUTPUT_TOKENS = 8192;
 const ALLOWED_ROLES = new Set(["system", "user", "assistant"]);
+
+/** Normalise a model id for matching: lowercase, no vendor prefix. */
+function modelKey(id) {
+  return String(id || "")
+    .toLowerCase()
+    .trim();
+}
+
+/** True if the id contains at least one filter substring, or is explicitly listed. */
+function isAllowedModel(id, filter, extra) {
+  const key = modelKey(id);
+  if (!key) return false;
+  if (extra.some((entry) => modelKey(entry) === key)) return true;
+  return filter.some((part) => part && key.includes(modelKey(part)));
+}
 
 function parseList(value, fallback) {
   if (typeof value !== "string" || !value.trim()) return fallback;
@@ -72,7 +97,7 @@ function json(data, status, headers = {}) {
  * Only known fields are forwarded, so the Worker cannot be used as a general
  * relay for arbitrary NVIDIA NIM requests.
  */
-function prepareUpstreamBody(raw, allowedModels) {
+function prepareUpstreamBody(raw, filter, extraModels) {
   let data;
   try {
     data = JSON.parse(raw);
@@ -87,10 +112,10 @@ function prepareUpstreamBody(raw, allowedModels) {
   if (typeof data.model !== "string" || !data.model.trim()) {
     return { error: "model is required." };
   }
-  if (!allowedModels.includes(data.model)) {
+  if (!isAllowedModel(data.model, filter, extraModels)) {
     return {
       error: `Model "${data.model}" is not allowed by this Worker.`,
-      detail: `Allowed models: ${allowedModels.join(", ")}.`,
+      detail: `Allowed model families: ${filter.join(", ")}.`,
     };
   }
 
@@ -166,7 +191,8 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const allowedOrigins = parseList(env.SYMUS_ORIGIN, DEFAULT_ALLOWED_ORIGINS);
-    const allowedModels = parseList(env.SYMUS_MODELS, DEFAULT_ALLOWED_MODELS);
+    const modelFilter = parseList(env.SYMUS_MODEL_FILTER, DEFAULT_MODEL_FILTER);
+    const extraModels = parseList(env.SYMUS_MODELS, []);
     const originAllowed = isAllowedOrigin(origin, allowedOrigins);
     const cors = originAllowed ? corsHeaders(origin) : {};
 
@@ -189,6 +215,70 @@ export default {
     // validation and model allow-list below.
     if (origin && !originAllowed) {
       return json({ error: "Origin not allowed" }, 403);
+    }
+
+    if (url.pathname === "/api/models") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405, cors);
+      }
+
+      const key = request.headers.get("Authorization");
+      if (!key || !/^Bearer\s+\S+$/i.test(key)) {
+        return json({ error: "Missing NVIDIA API key. Send Authorization: Bearer YOUR_KEY." }, 401, cors);
+      }
+
+      try {
+        const upstream = await fetch(NIM_MODELS_ENDPOINT, {
+          method: "GET",
+          headers: { Authorization: key, Accept: "application/json" },
+        });
+        const raw = await upstream.text();
+
+        if (!upstream.ok) {
+          let detail = `HTTP ${upstream.status}`;
+          try {
+            const parsed = JSON.parse(raw);
+            detail = (parsed.error && (parsed.error.message || parsed.error)) || detail;
+          } catch {
+            /* keep the status text */
+          }
+          return json({ error: "NVIDIA could not list models.", detail: String(detail) }, upstream.status, cors);
+        }
+
+        let payload;
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          return json({ error: "NVIDIA returned an unexpected model list." }, 502, cors);
+        }
+
+        const entries = Array.isArray(payload && payload.data)
+          ? payload.data
+          : Array.isArray(payload && payload.models)
+            ? payload.models
+            : [];
+
+        const models = entries
+          .map((entry) => (typeof entry === "string" ? { id: entry } : entry))
+          .filter((entry) => entry && typeof entry.id === "string")
+          .filter((entry) => isAllowedModel(entry.id, modelFilter, extraModels))
+          .map((entry) => ({
+            id: entry.id,
+            ownedBy: typeof entry.owned_by === "string" ? entry.owned_by : typeof entry.publisher === "string" ? entry.publisher : "",
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+
+        return json({ models, filter: modelFilter, count: models.length }, 200, cors);
+      } catch (error) {
+        return json(
+          {
+            error: "Could not reach NVIDIA NIM.",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+          502,
+          cors,
+        );
+      }
     }
 
     if (url.pathname !== "/api/notes") {
@@ -224,7 +314,7 @@ export default {
       return json({ error: "Request body is too large (maximum 1 MB)." }, 413, cors);
     }
 
-    const prepared = prepareUpstreamBody(rawBody, allowedModels);
+    const prepared = prepareUpstreamBody(rawBody, modelFilter, extraModels);
     if (prepared.error) {
       return json({ error: prepared.error, detail: prepared.detail }, 400, cors);
     }

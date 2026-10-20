@@ -18,7 +18,24 @@
   // arch/init.js exports SYMUS_CONFIG, which ARCH.js places on globalThis.
   const CONFIG = globalThis.SYMUS_CONFIG || {};
   const WORKER_URL = CONFIG.workerUrl || "https://symus-backend.chibbit99.workers.dev";
-  const MODEL = CONFIG.model || "nvidia/nemotron-3.5-lightning-30b-a3b";
+  const DEFAULT_MODEL = CONFIG.model || "nvidia/nemotron-3.5-lightning-30b-a3b";
+
+  // Model families the app offers. The Worker is the source of truth (it returns
+  // the filtered catalogue from /api/models); this list filters defensively in
+  // case the Worker is configured differently. Keep in sync with
+  // DEFAULT_MODEL_FILTER in worker.js.
+  const MODEL_FILTER = ["deepseek", "step", "nemotron", "mistral", "gemma", "glm", "muse"];
+
+  /** The model chosen in Settings, falling back to the configured default. */
+  function currentModel() {
+    const stored = Symus.store && Symus.store.getSettings ? Symus.store.getSettings().model : "";
+    return (stored || DEFAULT_MODEL).trim();
+  }
+
+  function matchesModelFilter(id) {
+    const key = String(id || "").toLowerCase();
+    return MODEL_FILTER.some((part) => key.includes(part));
+  }
 
   const CHUNK_SIZE = 24000; // characters per model request
   const MAX_TOKENS = 4096;
@@ -58,7 +75,7 @@
       },
       signal,
       body: JSON.stringify({
-        model: MODEL,
+        model: currentModel(),
         messages: [{ role: "user", content: prompt }],
         chat_template_kwargs: { enable_thinking: false },
         max_tokens: maxTokens,
@@ -124,6 +141,50 @@
     if (error.status === 429) return "Rate limited by NVIDIA (429). Wait a moment and retry.";
     const base = error.message || String(error);
     return error.detail ? `${base} ${error.detail}` : base;
+  }
+
+  /**
+   * Fetch the model catalogue from the Symus Worker.
+   *
+   * The Worker proxies NVIDIA's /v1/models with the caller's key and keeps only
+   * models whose id contains one of MODEL_FILTER. The response is filtered again
+   * here and sorted for display.
+   *
+   * @returns {Promise<{models: Array<{id: string, ownedBy: string}>, filter: string[]}>}
+   */
+  async function listModels({ apiKey, signal } = {}) {
+    const response = await fetch(WORKER_URL + "/api/models", {
+      method: "GET",
+      headers: { Authorization: "Bearer " + apiKey, Accept: "application/json" },
+      signal,
+    });
+
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch (error) {
+      /* handled below */
+    }
+
+    if (!response.ok) {
+      const detail =
+        data && data.error && (data.error.message || data.error)
+          ? String(data.error.message || data.error) + (data.detail ? " " + data.detail : "")
+          : "HTTP " + response.status;
+      const error = new Error(detail);
+      error.status = response.status;
+      throw error;
+    }
+    if (!data || !Array.isArray(data.models)) {
+      throw new Error("The model service returned an unexpected response.");
+    }
+
+    const models = data.models
+      .filter((entry) => entry && typeof entry.id === "string" && matchesModelFilter(entry.id))
+      .map((entry) => ({ id: entry.id, ownedBy: typeof entry.ownedBy === "string" ? entry.ownedBy : "" }));
+
+    return { models, filter: MODEL_FILTER };
   }
 
   /* ------------------------------------------------------------------ *
@@ -531,7 +592,11 @@
 
   Symus.ai = {
     WORKER_URL,
-    MODEL,
+    DEFAULT_MODEL,
+    MODEL_FILTER,
+    currentModel,
+    listModels,
+    matchesModelFilter,
     CHUNK_SIZE,
     MAX_OCR_PAGES,
     MAX_QUIZ_SOURCE_CHARS,

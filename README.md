@@ -1,11 +1,34 @@
 # Symus Study
 
+**Live app: <https://chibbit-99.github.io/Symus-Study/>**
+
 A browser-only study workspace. Organise **classes → study kits → resources**, turn PDFs and pasted
 text into complete AI-written study documents, and generate practice questions from them.
 
-No build step, no backend to run, no dependencies to install. Your data stays in your browser.
+No build step, no install, no server of your own. Your data stays in your browser.
 
-## Quick start
+## Using the hosted app
+
+The app is deployed to GitHub Pages at <https://chibbit-99.github.io/Symus-Study/>:
+
+1. Open the URL.
+2. Open **Settings** and paste your NVIDIA NIM API key (saved in that browser only).
+3. Create a class, then a study kit, then add a PDF or paste text.
+
+Everything except the AI calls runs in the tab. Note requests go to the Symus Cloudflare Worker,
+which forwards them to NVIDIA NIM.
+
+### GitHub Pages deployment
+
+The repository is a static site with no build step, so Pages serves it as-is:
+
+- Source: the `main` branch, `/` (root) folder.
+- After merging to `main`, give the Pages deployment a minute, then reload.
+- Confirm the running build under **Settings → Build**, or the console line
+  `[Symus Study] Ready. Build: …`. An older build means Pages has not caught up yet, or the
+  browser is caching (see below).
+
+## Running locally
 
 Serve the folder over HTTP (not `file://`):
 
@@ -97,6 +120,21 @@ is combined and sent to the model together, so the set tests the kit as a whole.
 - Answer MCQs inline (immediate right/wrong marking plus an explanation), reveal model answers for
   short questions, and download the set as Markdown.
 
+## Choosing the model
+
+**Settings → Model** picks which NVIDIA NIM model writes your documents and questions.
+
+- The list comes from the Symus Worker: `GET /api/models` asks NVIDIA which models your API key can
+  see, then keeps only the supported families.
+- A model is offered only if its id contains **deepseek**, **step**, **nemotron**, **mistral**,
+  **gemma**, **glm** or **muse**. The same rule is enforced in the Worker when a request is made, so
+  a model outside those families is rejected even if the UI is bypassed.
+- **Load available models** refreshes the list using the key currently typed in Settings. Failures
+  (bad key, offline) are shown in the dialog and your saved model is kept.
+- **Custom model id…** lets you type an id by hand, for a model that is not in the catalogue yet.
+- The default is `nvidia/nemotron-3.5-lightning-30b-a3b`. The choice is stored in `localStorage` and
+  applies to all later document and question requests; existing documents are unaffected.
+
 ## Data and privacy
 
 | Data | Where it lives |
@@ -178,15 +216,25 @@ compatibility_date = "2026-09-01"
 
 [vars]
 SYMUS_ORIGIN = "https://chibbit-99.github.io"
+SYMUS_MODEL_FILTER = "deepseek,step,nemotron,mistral,gemma,glm,muse"
 SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
 ```
 
-- `SYMUS_ORIGIN` — comma-separated allowed origins. Localhost on any port is always allowed.
-- `SYMUS_MODELS` — model allow-list; anything else is rejected.
-- Only known fields (`model`, `messages`, `max_tokens`, `temperature`, `top_p`,
-  `chat_template_kwargs.enable_thinking`) are forwarded, `stream` is forced off, bodies are capped at
-  1 MB and roles/token counts are validated, so the Worker cannot be used as a general NIM relay.
-- `GET /health` returns `{ "ok": true }`.
+| Variable | Purpose |
+| --- | --- |
+| `SYMUS_ORIGIN` | Comma-separated allowed browser origins. Localhost on any port is always allowed. |
+| `SYMUS_MODEL_FILTER` | Substrings a model id must contain to be listed or accepted. Defaults to the seven families above. |
+| `SYMUS_MODELS` | Optional extra model ids allowed even when they match no filter substring. |
+
+Routes:
+
+| Route | Description |
+| --- | --- |
+| `GET /health` | `{ "ok": true }` |
+| `GET /api/models` | Requires `Authorization: Bearer <NVIDIA key>`. Proxies NVIDIA's `/v1/models`, filters to the allowed families and returns `{ models: [{ id, ownedBy }], filter, count }`. |
+| `POST /api/notes` | Chat completion. Only known fields (`model`, `messages`, `max_tokens`, `temperature`, `top_p`, `chat_template_kwargs.enable_thinking`) are forwarded, `stream` is forced off, bodies are capped at 1 MB, roles and token counts are validated, and the model must match the family filter. |
+
+The Worker never stores or logs the key — it forwards the caller's `Authorization` header.
 
 ## Limitations
 
@@ -198,6 +246,8 @@ SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
 - Long resources are split into sections, so cross-section connections can be weaker. If a section hits
   the output-token limit the resource status says which part may be short.
 - AI output can be wrong or can miss nuance: check it against the source before revising from it.
+- Available models depend on your NVIDIA account and the Worker's family filter. If one is missing,
+  check **Settings → Model → Load available models** and `SYMUS_MODEL_FILTER` on the Worker.
 - Not exhaustively tested in every browser; it relies on modern ES2022 features.
 
 ## Dependencies
@@ -205,5 +255,6 @@ SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
 - ARCH.js — <https://chibbit-99.github.io/arch.js/>
 - PDF.js 4.4.168 — <https://mozilla.github.io/pdf.js/>
 - Tesseract.js 6.0.1 — <https://github.com/naptha/tesseract.js>
-- NVIDIA NIM / Nemotron 3.5 Lightning — <https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b>
+- NVIDIA NIM — <https://build.nvidia.com/> (default model: Nemotron 3.5 Lightning,
+  <https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b>)
 - Cloudflare Workers — <https://developers.cloudflare.com/workers/>
