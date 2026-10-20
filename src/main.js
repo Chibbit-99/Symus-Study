@@ -2,7 +2,7 @@ const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min
 const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/+esm";
 const WORKER_URL = "https://symus-backend.chibbit99.workers.dev";
-const NIM_MODEL = "google/diffusiongemma-26b-a4b-it";
+const NIM_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
 const NOTE_CHUNK_SIZE = 14000;
 
 const byId = (id) => document.getElementById(id);
