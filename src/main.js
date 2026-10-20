@@ -110,6 +110,7 @@ async function copyToClipboard(text, target) {
   }
 }
 
+startButton.addEventListener("click", runOcr);
 scaleInput.addEventListener("input", () => { scaleValue.textContent = scaleInput.value + "×"; });
 fileInput.addEventListener("change", () => {
   const file = fileInput.files && fileInput.files[0];
@@ -204,11 +205,13 @@ async function runOcr() {
     const pageCount = pagesSelect.value === "first" ? 1 : pdf.numPages;
     setStatus("Preparing OCR worker for " + languageSelect.value + "…");
 
+    let currentPage = 1;
     worker = await tesseract.createWorker(languageSelect.value, 1, {
       logger: (event) => {
         if (event.status === "recognizing text") {
           const percent = Math.round((event.progress || 0) * 100);
-          setStatus("Recognising page " + Math.min(resultPages + 1, pageCount) + " of " + pageCount + "… " + percent + "%");
+          progressBar.value = Math.round(((currentPage - 1 + (event.progress || 0)) / pageCount) * 100);
+          setStatus("Recognising page " + currentPage + " of " + pageCount + "… " + percent + "%");
         } else if (event.status) {
           setStatus("OCR engine: " + event.status + "…");
         }
@@ -217,6 +220,8 @@ async function runOcr() {
 
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
       if (cancelled) break;
+      currentPage = pageNumber;
+      progressBar.value = Math.round(((pageNumber - 1) / pageCount) * 100);
       setStatus("Rendering page " + pageNumber + " of " + pageCount + "…");
       const page = await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: Number(scaleInput.value) });
