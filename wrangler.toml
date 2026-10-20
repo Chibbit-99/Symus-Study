@@ -6,4 +6,7 @@ compatibility_date = "2026-09-01"
 # port is always allowed so the app can be run with `python3 -m http.server`.
 [vars]
 SYMUS_ORIGIN = "https://chibbit-99.github.io"
+# Model families offered in the app's model selector (substring match).
+SYMUS_MODEL_FILTER = "deepseek,step,nemotron,mistral,gemma,glm,muse"
+# Optional extra ids allowed even if they match no filter substring.
 SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
