@@ -912,6 +912,8 @@
           </div>
         </div>
         <div class="notice subtle">
+          <strong>Build:</strong> ${esc((globalThis.SYMUS_CONFIG || {}).version || "unknown")}
+          <span class="tiny">— if this is not the build you expect, hard-reload (Ctrl/Cmd-Shift-R).</span><br>
           <strong>Model:</strong> ${esc(Symus.ai.MODEL)}<br>
           <strong>Storage:</strong> ${(store.storageBytes() / 1024).toFixed(0)} KB used in localStorage.
           Study documents and questions are saved locally; uploaded files and their raw text are never stored.
