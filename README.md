@@ -10,10 +10,21 @@ No build step, no backend to run, no dependencies to install. Your data stays in
 Serve the folder over HTTP (not `file://`):
 
 ```bash
-python3 -m http.server 8000
+python3 dev-server.py          # http://localhost:8000, caching disabled
 ```
 
+`dev-server.py` is `http.server` plus `Cache-Control: no-store`, so a normal reload always
+shows the current build. Plain `python3 -m http.server` sends no cache headers, which lets the
+browser keep serving an old `src/*.js` after you update the code — the page looks unchanged
+even though the files on disk are new.
+
 Open <http://localhost:8000>, open **Settings**, paste an NVIDIA NIM API key, and create a study kit.
+
+**Confirming which build you are running:** every project file is requested with a `?v=` token
+(matched in `arch/config.json` and the fallback list in `index.html`), the startup log prints
+`Build: <version>`, and **Settings → Build** shows it. If that version is not the one you expect,
+hard-reload with Ctrl/Cmd-Shift-R. When releasing, bump the token in both places and
+`version` in `arch/init.js`.
 
 ## What you can do
 

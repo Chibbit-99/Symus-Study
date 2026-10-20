@@ -12,6 +12,9 @@
  * See https://chibbit-99.github.io/arch.js/docs/#init
  */
 export const SYMUS_CONFIG = Object.freeze({
+  // Bump together with the ?v= tokens in arch/config.json and index.html.
+  // Shown in Settings and logged at startup so a stale cached build is obvious.
+  version: "2026-10-21",
   model: "nvidia/nemotron-3.5-lightning-30b-a3b",
   workerUrl: "https://symus-backend.chibbit99.workers.dev",
   tesseractPackage: "tesseract.js",

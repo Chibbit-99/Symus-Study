@@ -55,7 +55,13 @@
     });
 
     window.dispatchEvent(new Event("symus-study:booted"));
-    console.log("[Symus Study] Ready. Model:", (globalThis.SYMUS_CONFIG || {}).model || "nvidia/nemotron-3.5-lightning-30b-a3b");
+    const config = globalThis.SYMUS_CONFIG || {};
+    console.log(
+      "[Symus Study] Ready. Build:",
+      config.version || "unknown",
+      "Model:",
+      config.model || "nvidia/nemotron-3.5-lightning-30b-a3b",
+    );
   }
 
   if (document.readyState === "loading") {
