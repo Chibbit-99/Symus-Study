@@ -575,7 +575,13 @@
   }
 
   function renderKitDocuments(kit, resources) {
-    const withDocs = resources.filter((resource) => resource.document);
+    // Documents that exist, plus resources whose document is being written now.
+    const withDocs = resources.filter(
+      (resource) =>
+        resource.document ||
+        jobs.getDraft(resource.id) ||
+        /writing the study document/i.test(resource.statusMessage || ""),
+    );
     if (!withDocs.length) {
       return `
         <section class="panel">
@@ -600,7 +606,11 @@
                 <span class="res-icon ${resource.type}">${resource.type === "pdf" ? "PDF" : "TXT"}</span>
                 <span class="doc-item-main">
                   <span class="doc-item-name">${esc(resource.name)}</span>
-                  <span class="muted tiny">${(resource.document.length / 1000).toFixed(1)}k chars · ${esc(relativeTime(resource.documentUpdatedAt))}</span>
+                  <span class="muted tiny">${
+                    resource.document
+                      ? `${(resource.document.length / 1000).toFixed(1)}k chars · ${esc(relativeTime(resource.documentUpdatedAt))}`
+                      : `<span class="live-dot"></span>writing now…`
+                  }</span>
                 </span>
               </button>`,
               )
@@ -612,11 +622,19 @@
             <h2>${esc(selected.name)}</h2>
             <div class="row tight">
               <a class="btn small" href="#/resource/${esc(selected.id)}">Open resource</a>
-              <button class="btn small" data-action="copy-doc" data-id="${esc(selected.id)}">Copy</button>
-              <button class="btn small" data-action="download-doc" data-id="${esc(selected.id)}">Download .md</button>
+              ${
+                selected.document
+                  ? `<button class="btn small" data-action="copy-doc" data-id="${esc(selected.id)}">Copy</button>
+                     <button class="btn small" data-action="download-doc" data-id="${esc(selected.id)}">Download .md</button>`
+                  : ""
+              }
             </div>
           </div>
-          <article class="md">${md.render(selected.document)}</article>
+          ${
+            selected.document
+              ? `<article class="md">${md.render(selected.document)}</article>`
+              : renderLiveDocument(selected)
+          }
         </section>
       </div>`;
   }
@@ -1058,7 +1076,13 @@
         <div class="res-main">
           <a class="res-name" href="#/resource/${esc(resource.id)}">${esc(resource.name)}</a>
           <p class="muted tiny">
-            ${esc(resource.statusMessage || meta.join(" · ") || "Waiting to process")}
+            ${
+              jobs.getDraft(resource.id)
+                ? `<span class="live-dot"></span>writing · ${jobs
+                    .getDraft(resource.id)
+                    .markdown.length.toLocaleString()} characters`
+                : esc(resource.statusMessage || meta.join(" · ") || "Waiting to process")
+            }
           </p>
         </div>
         <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
@@ -1123,14 +1147,64 @@
             ? editing
               ? `<textarea class="doc-editor" data-draft="doc-${esc(resource.id)}" data-doc-id="${esc(resource.id)}" rows="24">${esc(resource.document)}</textarea>`
               : `<article class="md">${md.render(resource.document)}</article>`
-            : `<div class="empty">
+            : processing && (jobs.getDraft(resource.id) || /writing the study document/i.test(resource.statusMessage || ""))
+              ? renderLiveDocument(resource)
+              : `<div class="empty">
                  <h3>No document yet</h3>
-                 <p class="muted">${processing ? "This resource is being processed." : "Processing did not finish. Re-run extraction to build the study document."}</p>
+                 <p class="muted">Processing did not finish. Re-run extraction to build the study document.</p>
                </div>`
         }
       </section>`;
 
     return page;
+  }
+
+  /**
+   * The study document while it is being written.
+   *
+   * Updated in place by updateLiveDocument() on every job tick, so the reader
+   * can watch the text arrive without the page re-rendering under them.
+   */
+  function renderLiveDocument(resource) {
+    const draft = jobs.getDraft(resource.id);
+    const markdown = draft ? draft.markdown : "";
+    return `
+      <div class="live-doc-head">
+        <span class="badge processing"><span class="live-dot"></span>Writing</span>
+        <span class="muted tiny" id="live-doc-meta">${
+          draft ? `${draft.markdown.length.toLocaleString()} characters` : "Waiting for the first words…"
+        }</span>
+      </div>
+      <div class="live-doc-wrap" data-live-wrap>
+        <article class="md live-doc" data-live-doc="${esc(resource.id)}">${
+          markdown ? md.render(markdown) : `<p class="muted small">The document will appear here as the model writes it.</p>`
+        }</article>
+      </div>`;
+  }
+
+  /** Repaint the live document from the latest draft. Cheap when not visible. */
+  function updateLiveDocument() {
+    const host = document.querySelector("[data-live-doc]");
+    if (!host) return;
+    const draft = jobs.getDraft(host.getAttribute("data-live-doc"));
+    if (!draft) return;
+
+    const wrap = host.closest("[data-live-wrap]");
+    const atBottom = wrap
+      ? wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 48
+      : true;
+
+    host.innerHTML = md.render(draft.markdown);
+
+    const meta = document.getElementById("live-doc-meta");
+    if (meta) {
+      const part = draft.total > 1 ? ` · part ${draft.part} of ${draft.total}` : "";
+      meta.textContent = `${draft.markdown.length.toLocaleString()} characters${part}`;
+    }
+
+    // Follow the writing only while the reader is already at the bottom, so
+    // scrolling up to re-read an earlier section is not yanked away.
+    if (wrap && atBottom) wrap.scrollTop = wrap.scrollHeight;
   }
 
   /* ------------------------------------------------------------------ *
@@ -1144,18 +1218,33 @@
     if (!job) {
       els.jobBar.hidden = true;
       els.jobBar.innerHTML = "";
+      delete els.jobBar.dataset.signature;
       return;
     }
 
     els.jobBar.hidden = false;
     const percent = Math.max(2, Math.min(100, Math.round(job.progress || 0)));
+    const writing = typeof job.draftChars === "number" && job.draftChars > 0;
+    const signature = `${job.id}|${job.step}|${percent}|${job.draftChars}|${queued.length}`;
+    if (els.jobBar.dataset.signature === signature) return;
+    els.jobBar.dataset.signature = signature;
+
     els.jobBar.innerHTML = `
       <div class="job-info">
         <div class="job-title">${esc(job.label || "Processing")}${queued.length ? ` <span class="muted tiny">(+${queued.length} queued)</span>` : ""}</div>
-        <div class="job-step">${esc(job.step || "Starting…")}</div>
+        <div class="job-step">${esc(job.step || "Starting…")}${
+          writing ? ` <span class="muted tiny">· ${job.draftChars.toLocaleString()} characters written</span>` : ""
+        }</div>
       </div>
       <div class="meter"><span style="width:${percent}%"></span></div>
-      <button class="btn small" data-job-action="cancel">Cancel</button>`;
+      <div class="row tight" style="justify-content:flex-end">
+        ${
+          job.resourceId && (job.kind === "pdf" || job.kind === "text")
+            ? `<a class="btn small" href="#/resource/${esc(job.resourceId)}">View live</a>`
+            : ""
+        }
+        <button class="btn small" data-job-action="cancel">Cancel</button>
+      </div>`;
 
     els.jobBar.querySelector("[data-job-action='cancel']").addEventListener("click", () => jobs.cancelCurrent());
   }
@@ -2367,6 +2456,7 @@
     let lastSeenJob = null;
     jobs.subscribe((current) => {
       renderJobBar();
+      updateLiveDocument();
       if (lastSeenJob && current !== lastSeenJob) {
         const finished = jobs.getLast();
         if (finished) {
