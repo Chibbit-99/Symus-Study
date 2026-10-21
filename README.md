@@ -51,9 +51,24 @@ hard-reload with Ctrl/Cmd-Shift-R. When releasing, bump the token in both places
 
 ## What you can do
 
+### Interface
+
+A light, minimal layout with a grouped sidebar:
+
+- **Sidebar** — *Main* (Dashboard), *Classes* (one row per class with its kit count, then **New class**),
+  and *Data* (export/import). Settings sits in the footer above a small storage meter and the current
+  library summary.
+- **Theme** — light by default; the moon/sun button in the sidebar header switches to dark and is
+  remembered per browser.
+- **Collapse** — the chevron folds the sidebar into an icon rail (also remembered).
+- **Floating +** (bottom right) creates a study kit from anywhere.
+- **Page headers** use a quiet eyebrow, a large title and actions on the right, with content in flat
+  bordered rows rather than a dense card grid.
+
 ### Dashboard
 
-- **Study kits** hold resources. Each kit card shows its class, resource count and last update.
+- **Study kits** hold resources. Each kit row shows the resource count as a large figure, its class,
+  what has been generated (questions, cards, exam) and the last update.
 - **Classes** group kits (e.g. *Year 11 Biology*). Create, rename and delete classes; kits are moved
   between classes from the dashboard or the kit page.
 - **Rename** kits, edit their subject/focus, move them, delete them.
@@ -139,8 +154,15 @@ Consequences you will see in the questions tab:
 A deck of revision cards, written the same way: **allocated per resource**, one request each, then
 merged, de-duplicated by prompt and interleaved so the deck is not grouped by resource.
 
-- Each card has a one-line **prompt** and a short, self-contained **answer**; one fact per card.
+- Each card is one fact: a **front** you are cued with and a **back** you try to recall.
 - Choose 10, 20, 30 or 40 cards.
+- **Two deck styles**, set under **Settings → Flashcards**:
+  - **Vocabulary & concepts** — the front is the *term or concept* (no question mark), the back is its
+    definition or explanation. Best for definitions, names and key ideas.
+  - **Exam-style questions** — the front is an actual question ending in `?`, the back is the model
+    answer. Best for rehearsing how you would answer in a paper.
+  The generate dialog defaults to your saved style and lets you pick the other one for a single deck;
+  the deck records which style it was written in and labels the card faces accordingly.
 - The player shows one card at a time: click it (or press **Space**) to reveal the answer, **←/→** to
   move through the deck, **Got it** / **Still learning** to rate a card as you go.
 - **Shuffle** randomises the order, **Restart** returns to the first card, **Browse all** switches to a

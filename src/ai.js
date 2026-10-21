@@ -619,21 +619,47 @@
    * Flashcards
    * ------------------------------------------------------------------ */
 
+  /**
+   * Flashcard prompt in one of two styles:
+   *   "vocab"    — front is a term/concept, back is its definition or explanation.
+   *   "question" — front is a question, back is the answer.
+   */
   function buildFlashcardsPrompt(document, count, options = {}) {
     const single = Boolean(options.sourceName);
-    return [
+    const vocab = options.style !== "question";
+    const common = [
       single
         ? `You are writing revision flashcards for one resource of a study kit: "${options.sourceName}".`
         : "You are writing revision flashcards for a student, based only on the study document below.",
       `Write exactly ${count} flashcard(s) from this material.`,
-      "Each card has a short prompt on the front and a concise answer on the back.",
-      "Rules:",
       "- One fact, definition, process or relationship per card — no compound cards.",
-      "- The front must be a question or a cue that stands on its own, not a sentence copied from the document; never use fill-in-the-blank with a single blanked word.",
-      "- The back must be a complete, self-contained answer of one or two sentences.",
       "- No yes/no cards, no trivia, no duplicates, no 'all of the above'.",
       "- Prefer the ideas a student must be able to recall under exam pressure.",
       count === 1 ? "- One card only: choose the single most important idea." : "",
+    ];
+
+    const style = vocab
+      ? [
+          "DECK STYLE: vocabulary and concepts.",
+          "The FRONT is the term, name or concept to recall — a short label, not a question and not a full sentence. Do not end the front with a question mark.",
+          'Example front: "Osmosis". Example back: "Net movement of water across a semi-permeable membrane from low to high solute concentration."',
+          "The BACK is a precise definition or one-or-two-sentence explanation of that term.",
+          "- Never put the answer inside the front, and never use fill-in-the-blank with a blanked-out word.",
+        ]
+      : [
+          "DECK STYLE: exam-style questions.",
+          "The FRONT is an actual question a student could be asked — it must end with a question mark and be answerable without extra context.",
+          'Example front: "Why does water move into a cell placed in a hypotonic solution?".',
+          "The BACK is the model answer, one or two sentences, complete enough to mark against.",
+          "- Never give the answer away in the question, and never ask two questions in one card.",
+        ];
+
+    return [
+      ...common.slice(0, 2),
+      ...style,
+      "Each card is a single JSON object with a front and a back.",
+      "",
+      ...common.slice(2),
       "",
       "Reply with ONLY this JSON object:",
       '{"cards":[{"front":"...","back":"..."}]}',
@@ -659,7 +685,7 @@
     return cards;
   }
 
-  async function generateFlashcards({ apiKey, document, count = 10, signal, onProgress, sourceName, sourceCount, partLabel }) {
+  async function generateFlashcards({ apiKey, document, count = 10, style = "vocab", signal, onProgress, sourceName, sourceCount, partLabel }) {
     const trimmed = String(document).slice(0, MAX_QUIZ_SOURCE_CHARS + 2000);
     const askCount = Math.max(1, Math.min(Math.floor(count) || 1, 40));
 
@@ -671,7 +697,7 @@
 
     const { content } = await chat({
       apiKey,
-      prompt: buildFlashcardsPrompt(trimmed, askCount, { sourceName, sourceCount }),
+      prompt: buildFlashcardsPrompt(trimmed, askCount, { sourceName, sourceCount, style }),
       maxTokens: MAX_TOKENS,
       temperature: 0.4,
       signal,
