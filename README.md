@@ -1,21 +1,23 @@
-# Symus Study
+# StudyForge
 
-**Live app: <https://chibbit-99.github.io/Symus-Study/>**
+**Live app: <https://chibbit-99.github.io/Symus-Study/>** (the URL kept its old name)
 
 A browser-only study workspace. Organise **classes → study kits → resources**, turn PDFs and pasted
-text into complete AI-written study documents, and generate practice questions from them.
+text into complete AI-written **study guides**, then revise with **flashcards**, a **quiz** and a
+**practice test**. Quiz attempts are saved so you can see yourself improve.
 
 No build step, no install, no server of your own. Your data stays in your browser.
 
 ## Using the hosted app
 
-The app is deployed to GitHub Pages at <https://chibbit-99.github.io/Symus-Study/>:
+The app is deployed to GitHub Pages at <https://chibbit-99.github.io/Symus-Study/> (repository name
+unchanged from before the StudyForge rebrand):
 
 1. Open the URL.
 2. Open **Settings** and paste your NVIDIA NIM API key (saved in that browser only).
 3. Create a class, then a study kit, then add a PDF or paste text.
 
-Everything except the AI calls runs in the tab. Note requests go to the Symus Cloudflare Worker,
+Everything except the AI calls runs in the tab. Note requests go to the StudyForge Cloudflare Worker,
 which forwards them to NVIDIA NIM.
 
 ### GitHub Pages deployment
@@ -25,7 +27,7 @@ The repository is a static site with no build step, so Pages serves it as-is:
 - Source: the `main` branch, `/` (root) folder.
 - After merging to `main`, give the Pages deployment a minute, then reload.
 - Confirm the running build under **Settings → Build**, or the console line
-  `[Symus Study] Ready. Build: …`. An older build means Pages has not caught up yet, or the
+  `[StudyForge] Ready. Build: …`. An older build means Pages has not caught up yet, or the
   browser is caching (see below).
 
 ## Running locally
@@ -55,9 +57,12 @@ hard-reload with Ctrl/Cmd-Shift-R. When releasing, bump the token in both places
 
 A light, minimal layout with a grouped sidebar:
 
-- **Sidebar** — *Main* (Dashboard), *Classes* (one row per class with its kit count, then **New class**),
-  and *Data* (export/import). Settings sits in the footer above a small storage meter and the current
-  library summary.
+- **Sidebar** — *Overview* (Dashboard) and an expandable **Classes** tree: click a class to open its
+  study kits, click a kit to open its four study modes — **Study guide**, **Flashcards**, **Quiz** and
+  **Practice test**. *Data* holds export/import. Settings sits in the footer above a small storage
+  meter and the current library summary. The tree follows the page you are on.
+- **Colour** — a violet → ember accent on soft neutral surfaces, with a matching dark theme. The
+  theme button in the sidebar header switches modes and remembers the choice.
 - **Theme** — light by default; the moon/sun button in the sidebar header switches to dark and is
   remembered per browser.
 - **Collapse** — the chevron folds the sidebar into an icon rail (also remembered).
@@ -82,10 +87,10 @@ Each study kit is split into five tabs (each with its own URL, so back/forward a
 | Tab | URL | What it shows |
 | --- | --- | --- |
 | **Resources** | `#/kit/<id>` | Add PDFs/pasted text and see every resource with its status. |
-| **Study documents** | `#/kit/<id>/documents` | Read the generated document for any resource in the kit, with copy/download. |
-| **Practice questions** | `#/kit/<id>/questions` | Questions written from **all** documents in the kit. |
-| **Flashcards** | `#/kit/<id>/flashcards` | A revision deck written from **all** documents, with a card player. |
-| **Practice exam** | `#/kit/<id>/exam` | A timed, auto-marked multiple-choice paper from **all** documents. |
+| **Study guide** | `#/kit/<id>/documents` | Read the generated document for any resource in the kit, with copy/download. |
+| **Quiz** | `#/kit/<id>/questions` | One question at a time, marked as you go, submitted at the end. |
+| **Flashcards** | `#/kit/<id>/flashcards` | A revision deck written from **all** documents, with an animated card player. |
+| **Practice test** | `#/kit/<id>/exam` | A timed, auto-marked multiple-choice paper from **all** documents. |
 
 ### Study kits and resources
 
@@ -103,7 +108,7 @@ text  ┌──────────────────┐   ┌──�
 ```
 
 **Why the gap check exists:** a PDF's text layer is normally enough, but scanned pages, image-only
-pages and vector text have none. Instead of OCR-ing every page (slow), Symus Study asks the model to
+pages and vector text have none. Instead of OCR-ing every page (slow), StudyForge asks the model to
 audit page-by-page character counts and previews:
 
 - pages with **no text at all** are always OCR'd;
@@ -123,9 +128,9 @@ sections, each of which becomes part of one complete Markdown study document.
 - Copy or download as `.md`.
 - The document is saved to `localStorage`; **the uploaded file and its raw extracted text are not**.
 
-### Practice questions (per study kit)
+### Quiz (per study kit)
 
-Questions belong to the whole **study kit**: every study document in it is covered.
+Questions belong to the whole **study kit**: every study guide in it is covered.
 
 A single prompt containing every document does not work — the model drifts towards whichever resource
 is most salient and effectively ignores the rest. So the kit's questions are **allocated per
@@ -146,8 +151,25 @@ Consequences you will see in the questions tab:
 - Specific warnings when a resource produced none, when a newer document is not covered yet,
   and when a resource's request failed (the other resources' questions are still saved).
 - Progress reports which resource is being written and how many questions it is asked for.
-- Answer MCQs inline (immediate right/wrong marking plus an explanation), reveal model answers for
-  short questions, and download the set as Markdown.
+- Download the set as Markdown.
+
+**How a quiz run works:**
+
+1. **Start quiz** shows one question at a time — never the whole paper at once.
+2. Choose an option, or (for short answers) type into the answer box. **Mark & next** is disabled
+   until there is an answer.
+3. Pressing it **marks the question immediately and locks the answer** — it cannot be changed after
+   that. The correct answer, the explanation and (for short answers) the marker's feedback appear
+   inline.
+4. **Short answers are marked by AI**: the model compares meaning, not wording, so paraphrases,
+   synonyms, abbreviations and extra correct detail are accepted. With no API key — or if the AI
+   call fails — a local keyword-coverage marker is used instead and the result is labelled as
+   offline marking.
+5. Every question must be answered and marked; the last **See result** button **submits** the quiz.
+6. The result screen shows the score, percentage, time taken and a full question-by-question review.
+7. **Every submitted attempt is saved** with this study kit (up to 50) and listed under
+   *Past attempts* with its score, date, time and best result. Regenerating the questions keeps the
+   history.
 
 ### Flashcards (per study kit)
 
@@ -163,15 +185,16 @@ merged, de-duplicated by prompt and interleaved so the deck is not grouped by re
     answer. Best for rehearsing how you would answer in a paper.
   The generate dialog defaults to your saved style and lets you pick the other one for a single deck;
   the deck records which style it was written in and labels the card faces accordingly.
-- The player shows one card at a time: click it (or press **Space**) to reveal the answer, **←/→** to
-  move through the deck, **Got it** / **Still learning** to rate a card as you go.
+- The player shows one card at a time. Flipping is a real 3D card-turn animation: click the card (or
+  press **Space**) and it rotates to reveal the answer; new cards slide in. **←/→** move through the
+  deck, and **Got it** / **Still learning** rate a card and advance.
 - **Shuffle** randomises the order, **Restart** returns to the first card, **Browse all** switches to a
   plain list, and the deck can be downloaded as Markdown.
 - Progress (card *n* of *N*, cards known, cards to review) is shown above the card.
 
-### Practice exam (per study kit)
+### Practice test (per study kit)
 
-The same material as the practice questions, but as a **timed paper**:
+The same material as the quiz, but as a **timed paper**:
 
 - **Multiple choice only**, so the paper can be marked automatically — no short answers.
 - Choose 10–30 questions and a time limit, or let it pick about 1¼ minutes per question (minimum 5,
@@ -188,7 +211,7 @@ The same material as the practice questions, but as a **timed paper**:
 
 **Settings → Model** picks which NVIDIA NIM model writes your documents and questions.
 
-- The list comes from the Symus Worker: `GET /api/models` asks NVIDIA which models your API key can
+- The list comes from the StudyForge Worker: `GET /api/models` asks NVIDIA which models your API key can
   see, then keeps only the supported families.
 - A model is offered only if its id contains **deepseek**, **step**, **nemotron**, **mistral**,
   **gemma**, **glm** or **muse**. The same rule is enforced in the Worker when a request is made, so
@@ -203,7 +226,7 @@ The same material as the practice questions, but as a **timed paper**:
 
 | Data | Where it lives |
 | --- | --- |
-| Classes, kits, resources, documents, questions | `localStorage` under `symus.study.v1` (questions live on the kit) |
+| Classes, kits, resources, documents, questions, quiz attempts | `localStorage` under `studyforge.study.v1` (questions and attempts live on the kit; data saved as `symus.study.v1` is migrated on load) |
 | NVIDIA NIM API key | `localStorage` (same key), sent only with your requests |
 | Uploaded PDFs and their raw extracted text | memory only, discarded when processing ends |
 | Generated documents / questions | `localStorage` — use **Export** regularly |
@@ -212,7 +235,7 @@ The API key is saved in this browser so you do not have to paste it every sessio
 to this browser profile can read it; use **Settings → Delete all data** to clear everything, and never
 use a shared machine with a billable key.
 
-Note requests go to the Symus Cloudflare Worker, which forwards them to NVIDIA and does not store the
+Note requests go to the StudyForge Cloudflare Worker, which forwards them to NVIDIA and does not store the
 key:
 
 ```
@@ -232,12 +255,12 @@ The app follows the layout documented at <https://chibbit-99.github.io/arch.js/d
 ```
 index.html            loads releases/latest.js
 arch/config.json      modules: ["npmloader.js"], js: [seven project files, in order]
-arch/init.js          exports SYMUS_CONFIG { model, workerUrl }
+arch/init.js          exports STUDYFORGE_CONFIG { model, workerUrl }
 src/*.js              application code executed by ARCH.js
 ```
 
 - **Project files run in order.** ARCH.js fetches and executes each file in `config.json → js`:
-  `store → markdown → ocr → ai → jobs → ui → main`. Each registers itself on `window.Symus`;
+  `store → markdown → ocr → ai → jobs → ui → main`. Each registers itself on `window.StudyForge`;
   `main.js` boots the UI once everything is present.
 - **No module syntax in project files.** ARCH.js injects them as classic scripts, so there are no
   `import`/`export` statements and no top-level `await` in `src/`.
@@ -256,13 +279,13 @@ src/*.js              application code executed by ARCH.js
 | --- | --- |
 | `index.html` | App shell, styles, ARCH.js runtime tag and fallback loader. |
 | `arch/config.json` | ARCH.js modules and the ordered project file list. |
-| `arch/init.js` | Exports `SYMUS_CONFIG` (model, worker URL). |
-| `src/store.js` | localStorage data model: classes, kits, resources, settings, backup/restore. |
+| `arch/init.js` | Exports `STUDYFORGE_CONFIG` (model, worker URL). |
+| `src/store.js` | localStorage data model: classes, kits, resources, quiz attempts, settings, backup/restore. |
 | `src/markdown.js` | Small, safe Markdown renderer (HTML escaped, safe links only). |
 | `src/ocr.js` | PDF.js text-layer extraction, Tesseract OCR of selected pages, text reconstruction. |
-| `src/ai.js` | NIM client: gap analysis, document generation, questions, flashcards, exam papers, allocation, retries. |
+| `src/ai.js` | NIM client: gap analysis, document generation, questions, flashcards, exam papers, short-answer marking, allocation, retries. |
 | `src/jobs.js` | Sequential job queue and the extraction pipeline. |
-| `src/ui.js` | Dashboard, kit and resource views, modals, toasts, job bar. |
+| `src/ui.js` | Dashboard, sidebar tree, kit and resource views, quiz run + result screens, flashcard player, modals, toasts, job bar. |
 | `src/main.js` | Boot. |
 | `worker.js` | Cloudflare Worker proxying `/api/notes` to NVIDIA NIM. |
 | `wrangler.toml` | Worker configuration. |
@@ -313,7 +336,10 @@ The Worker never stores or logs the key — it forwards the caller's `Authorizat
 - Kits with many resources mean one model request per resource, so generating a large set takes
   proportionally longer — a 40-card deck or a 30-question exam across five resources is ten requests.
 - An exam run lives in memory: reloading the page or closing the tab abandons it (the saved paper and
-  last score survive).
+  last score survive). A quiz run is the same — reloading mid-quiz loses that run, but every submitted
+  attempt is saved.
+- AI marking of short answers is a judgement call: it accepts different wordings, but can occasionally
+  be generous or strict. The model answer is always shown for you to check.
 - Available models depend on your NVIDIA account and the Worker's family filter. If one is missing,
   check **Settings → Model → Load available models** and `SYMUS_MODEL_FILTER` on the Worker.
 - Not exhaustively tested in every browser; it relies on modern ES2022 features.

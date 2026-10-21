@@ -1,5 +1,5 @@
 /**
- * Symus Study — data store
+ * StudyForge — data store
  *
  * Everything the app owns lives in localStorage under one key:
  *   classes  -> groups of study kits
@@ -11,11 +11,16 @@
  * Raw uploaded files and their extracted source text are never persisted: only
  * the generated document, questions and metadata are written to storage.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
-  const STORAGE_KEY = "symus.study.v1";
+  const STORAGE_KEY = "studyforge.study.v1";
+  // The app was previously called Symus Study; keep reading its key so an
+  // existing library survives the rebrand.
+  const LEGACY_STORAGE_KEY = "symus.study.v1";
   const VERSION = 1;
+  // How many finished quiz attempts are kept per study kit.
+  const MAX_QUIZ_ATTEMPTS = 50;
 
   const listeners = new Set();
   let state = null;
@@ -48,7 +53,7 @@
 
   const OCR_LANGUAGES = ["eng", "jpn", "eng+jpn", "chi_sim", "fra", "deu", "spa"];
   const DEFAULT_MODEL =
-    (globalThis.SYMUS_CONFIG && globalThis.SYMUS_CONFIG.model) || "nvidia/nemotron-3.5-lightning-30b-a3b";
+    (globalThis.STUDYFORGE_CONFIG && globalThis.STUDYFORGE_CONFIG.model) || "nvidia/nemotron-3.5-lightning-30b-a3b";
   const clampScale = (value) => {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(3, Math.max(1, number)) : 2;
@@ -230,6 +235,41 @@
     };
   }
 
+  /** One answered question inside a saved quiz attempt. */
+  function normaliseQuizAnswer(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      type: raw.type === "short" ? "short" : "mcq",
+      question: str(raw.question),
+      given: str(raw.given),
+      expected: str(raw.expected),
+      correct: raw.correct === true,
+      score: Number.isFinite(raw.score) ? Math.max(0, Math.min(1, raw.score)) : 0,
+      feedback: str(raw.feedback),
+      markedBy: raw.markedBy === "ai" ? "ai" : raw.markedBy === "offline" ? "offline" : "auto",
+    };
+  }
+
+  /** A finished quiz run, kept so progress can be compared over time. */
+  function normaliseQuizAttempt(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const answers = arr(raw.answers).map(normaliseQuizAnswer).filter(Boolean);
+    const total = Number.isFinite(raw.total) ? raw.total : answers.length;
+    if (!total) return null;
+    const correct = Number.isFinite(raw.correct)
+      ? raw.correct
+      : answers.filter((answer) => answer.correct).length;
+    return {
+      id: str(raw.id) || uid("att"),
+      takenAt: str(raw.takenAt, now()),
+      correct,
+      total,
+      percent: Math.round((correct / Math.max(1, total)) * 100),
+      secondsUsed: Number.isFinite(raw.secondsUsed) ? raw.secondsUsed : 0,
+      answers,
+    };
+  }
+
   function normaliseQuiz(raw) {
     if (!raw || typeof raw !== "object") return null;
     const items = arr(raw.items)
@@ -247,6 +287,12 @@
       coverage: normaliseCoverage(raw.coverage),
       failures: normaliseFailures(raw.failures),
       truncated: raw.truncated === true,
+      // Newest first, so the history list needs no extra sorting.
+      attempts: arr(raw.attempts)
+        .map(normaliseQuizAttempt)
+        .filter(Boolean)
+        .sort((a, b) => str(b.takenAt).localeCompare(str(a.takenAt)))
+        .slice(0, MAX_QUIZ_ATTEMPTS),
     };
   }
 
@@ -256,10 +302,10 @@
 
   function readStorage() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch (error) {
-      console.warn("[Symus Study] Could not read saved data; starting fresh.", error);
+      console.warn("[StudyForge] Could not read saved data; starting fresh.", error);
       return null;
     }
   }
@@ -274,7 +320,7 @@
       return true;
     } catch (error) {
       storageError = error;
-      console.warn("[Symus Study] Could not save to localStorage:", error);
+      console.warn("[StudyForge] Could not save to localStorage:", error);
       emit();
       return false;
     }
@@ -285,7 +331,7 @@
       try {
         listener(state, storageError);
       } catch (error) {
-        console.error("[Symus Study] Store listener failed:", error);
+        console.error("[StudyForge] Store listener failed:", error);
       }
     }
   }
@@ -438,7 +484,15 @@
   function setKitQuiz(kitId, quiz) {
     const kit = getKit(kitId);
     if (!kit) return null;
+    // Past attempts belong to the kit, not to one question set: keep the
+    // history when the questions are regenerated.
+    const previousAttempts = kit.quiz ? arr(kit.quiz.attempts) : [];
     kit.quiz = normaliseQuiz(quiz);
+    if (kit.quiz && previousAttempts.length) {
+      kit.quiz.attempts = arr(kit.quiz.attempts).length
+        ? kit.quiz.attempts
+        : previousAttempts.slice(0, MAX_QUIZ_ATTEMPTS);
+    }
     kit.updatedAt = now();
     commit();
     return kit;
@@ -452,6 +506,32 @@
     touchKit(kitId);
     commit();
     return kit.flashcards;
+  }
+
+  /**
+   * Append a finished quiz attempt to the kit's history.
+   * Runs are kept newest-first and capped, so the history cannot grow forever.
+   */
+  function addKitQuizAttempt(kitId, attempt) {
+    const kit = getKit(kitId);
+    const next = normaliseQuizAttempt(attempt);
+    if (!kit || !kit.quiz || !next) return null;
+    kit.quiz.attempts = [next, ...arr(kit.quiz.attempts)].slice(0, MAX_QUIZ_ATTEMPTS);
+    kit.updatedAt = now();
+    touchKit(kitId);
+    commit();
+    return next;
+  }
+
+  function deleteKitQuizAttempt(kitId, attemptId) {
+    const kit = getKit(kitId);
+    if (!kit || !kit.quiz) return false;
+    const before = arr(kit.quiz.attempts).length;
+    kit.quiz.attempts = arr(kit.quiz.attempts).filter((attempt) => attempt.id !== attemptId);
+    if (kit.quiz.attempts.length === before) return false;
+    touchKit(kitId);
+    commit();
+    return true;
   }
 
   function setKitExam(kitId, exam) {
@@ -515,7 +595,7 @@
    * ------------------------------------------------------------------ */
 
   function exportData() {
-    return JSON.stringify({ app: "symus-study", exportedAt: now(), data: state }, null, 2);
+    return JSON.stringify({ app: "studyforge", exportedAt: now(), data: state }, null, 2);
   }
 
   /** Merge an exported backup into the current state. Returns counts. */
@@ -528,7 +608,7 @@
     }
     const data = parsed && parsed.data ? parsed.data : parsed;
     if (!data || typeof data !== "object" || (!data.kits && !data.classes && !data.resources)) {
-      throw new Error("That file does not look like a Symus Study backup.");
+      throw new Error("That file does not look like a StudyForge backup.");
     }
     const incoming = normalise(data);
     const classMap = new Map();
@@ -577,7 +657,7 @@
     return state;
   }
 
-  Symus.store = {
+  StudyForge.store = {
     STORAGE_KEY,
     load,
     get,
@@ -597,6 +677,8 @@
     updateResource,
     setResourceDocument,
     setKitQuiz,
+    addKitQuizAttempt,
+    deleteKitQuizAttempt,
     setKitFlashcards,
     setKitExam,
     setKitExamAttempt,
@@ -614,4 +696,4 @@
     storageBytes,
     getStorageError: () => storageError,
   };
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));

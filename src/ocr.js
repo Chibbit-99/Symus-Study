@@ -1,5 +1,5 @@
 /**
- * Symus Study — PDF text extraction and OCR.
+ * StudyForge — PDF text extraction and OCR.
  *
  * Two jobs:
  *   extractTextPages() — read each page's embedded text layer with PDF.js.
@@ -9,7 +9,7 @@
  * Tesseract.js is loaded on demand through ARCH.js `importPackage()`, with the
  * jsDelivr ESM build as a fallback, so the dashboard never waits for it.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
   const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
@@ -58,12 +58,12 @@
         try {
           if (onStatus) onStatus("Loading the OCR engine through ARCH.js…");
           const pkg = await globalThis.importPackage(
-            (globalThis.SYMUS_CONFIG && globalThis.SYMUS_CONFIG.tesseractPackage) || "tesseract.js",
+            (globalThis.STUDYFORGE_CONFIG && globalThis.STUDYFORGE_CONFIG.tesseractPackage) || "tesseract.js",
           );
           if (isTesseract(pkg)) return pkg;
-          console.warn("[Symus Study OCR] importPackage returned no createWorker; using the CDN build.");
+          console.warn("[StudyForge OCR] importPackage returned no createWorker; using the CDN build.");
         } catch (error) {
-          console.warn("[Symus Study OCR] importPackage failed; using the CDN build.", error);
+          console.warn("[StudyForge OCR] importPackage failed; using the CDN build.", error);
         }
       }
       if (onStatus) onStatus("Loading the OCR engine…");
@@ -187,7 +187,7 @@
     try {
       await worker.terminate();
     } catch (error) {
-      console.warn("[Symus Study OCR] Could not stop the OCR worker cleanly:", error);
+      console.warn("[StudyForge OCR] Could not stop the OCR worker cleanly:", error);
     }
   }
 
@@ -238,7 +238,7 @@
     return results;
   }
 
-  Symus.ocr = {
+  StudyForge.ocr = {
     ensurePdfjs,
     ensureTesseract,
     openPdf,
@@ -247,4 +247,4 @@
     stopWorker,
     textContentToText,
   };
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));

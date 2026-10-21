@@ -1,20 +1,20 @@
 /**
- * Symus Study — boot
+ * StudyForge — boot
  *
  * Executed last by ARCH.js (see arch/config.json). Every module above this file
- * has already registered itself on window.Symus.
+ * has already registered itself on window.StudyForge.
  *
  * This file must stay a plain browser script: ARCH.js injects it as a classic
  * <script>, so no import/export statements and no top-level await.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
-  if (window.__symusStudyBooted) {
-    console.warn("[Symus Study] Already started; ignoring a duplicate boot.");
+  if (window.__studyForgeBooted) {
+    console.warn("[StudyForge] Already started; ignoring a duplicate boot.");
     return;
   }
-  window.__symusStudyBooted = true;
+  window.__studyForgeBooted = true;
 
   const REQUIRED = ["store", "md", "ocr", "ai", "jobs", "ui"];
 
@@ -25,15 +25,15 @@
     const box = document.createElement("div");
     box.className = "page";
     box.innerHTML =
-      '<div class="empty"><h2>Symus Study could not start</h2><p class="muted"></p></div>';
+      '<div class="empty"><h2>StudyForge could not start</h2><p class="muted"></p></div>';
     box.querySelector("p").textContent = message;
     view.appendChild(box);
   }
 
   function boot() {
-    const missing = REQUIRED.filter((name) => !Symus[name]);
+    const missing = REQUIRED.filter((name) => !StudyForge[name]);
     if (missing.length) {
-      console.error("[Symus Study] Missing modules:", missing);
+      console.error("[StudyForge] Missing modules:", missing);
       showFatal(
         "These modules failed to load: " +
           missing.join(", ") +
@@ -43,21 +43,21 @@
     }
 
     try {
-      Symus.ui.init();
+      StudyForge.ui.init();
     } catch (error) {
-      console.error("[Symus Study] Startup failed:", error);
+      console.error("[StudyForge] Startup failed:", error);
       showFatal(error && error.message ? error.message : String(error));
       return;
     }
 
     window.addEventListener("pagehide", () => {
-      Symus.ocr.stopWorker();
+      StudyForge.ocr.stopWorker();
     });
 
-    window.dispatchEvent(new Event("symus-study:booted"));
-    const config = globalThis.SYMUS_CONFIG || {};
+    window.dispatchEvent(new Event("studyforge:booted"));
+    const config = globalThis.STUDYFORGE_CONFIG || {};
     console.log(
-      "[Symus Study] Ready. Build:",
+      "[StudyForge] Ready. Build:",
       config.version || "unknown",
       "Model:",
       config.model || "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -69,4 +69,4 @@
   } else {
     boot();
   }
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));

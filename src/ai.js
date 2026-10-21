@@ -1,7 +1,7 @@
 /**
- * Symus Study — NVIDIA NIM client.
+ * StudyForge — NVIDIA NIM client.
  *
- * All requests go through the Symus Cloudflare Worker
+ * All requests go through the StudyForge Cloudflare Worker
  * (https://symus-backend.chibbit99.workers.dev/api/notes), which forwards them
  * to integrate.api.nvidia.com with the user's own API key.
  *
@@ -12,11 +12,11 @@
  *   generateDocument()   — turn source text into a complete study document
  *   generateQuestions()  — practice questions from that document
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
-  // arch/init.js exports SYMUS_CONFIG, which ARCH.js places on globalThis.
-  const CONFIG = globalThis.SYMUS_CONFIG || {};
+  // arch/init.js exports STUDYFORGE_CONFIG, which ARCH.js places on globalThis.
+  const CONFIG = globalThis.STUDYFORGE_CONFIG || {};
   const WORKER_URL = CONFIG.workerUrl || "https://symus-backend.chibbit99.workers.dev";
   const DEFAULT_MODEL = CONFIG.model || "nvidia/nemotron-3.5-lightning-30b-a3b";
 
@@ -28,7 +28,7 @@
 
   /** The model chosen in Settings, falling back to the configured default. */
   function currentModel() {
-    const stored = Symus.store && Symus.store.getSettings ? Symus.store.getSettings().model : "";
+    const stored = StudyForge.store && StudyForge.store.getSettings ? StudyForge.store.getSettings().model : "";
     return (stored || DEFAULT_MODEL).trim();
   }
 
@@ -135,7 +135,7 @@
     if (error.status === 401) return "NVIDIA rejected the API key (401). Check the key in Settings.";
     if (error.status === 402) return "NVIDIA reported a billing/quota problem (402).";
     if (error.status === 403) {
-      return "The request was refused (403). If the app is served from a new origin, update SYMUS_ORIGIN on the Worker.";
+      return "The request was refused (403). If the app is served from a new origin, update the worker origin allowlist.";
     }
     if (error.status === 404) return "The model is not available to this key (404).";
     if (error.status === 429) return "Rate limited by NVIDIA (429). Wait a moment and retry.";
@@ -144,7 +144,7 @@
   }
 
   /**
-   * Fetch the model catalogue from the Symus Worker.
+   * Fetch the model catalogue from the StudyForge Worker.
    *
    * The Worker proxies NVIDIA's /v1/models with the caller's key and keeps only
    * models whose id contains one of MODEL_FILTER. The response is filtered again
@@ -616,6 +616,134 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Marking short answers
+   * ------------------------------------------------------------------ */
+
+  const MARK_STOPWORDS = new Set([
+    "the","a","an","of","to","in","is","are","was","were","be","been","and","or","for","on","with",
+    "that","this","it","as","at","by","from","which","its","their","they","them","has","have","had",
+    "can","will","would","should","may","might","into","than","then","so","such","also","when","where",
+    "what","who","why","how","not","no","but","if","because","about","between","using","use","used",
+  ]);
+
+  /** Content words of an answer, used for the offline fallback marker. */
+  function keywords(text) {
+    return new Set(
+      String(text || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s'-]/g, " ")
+        .split(/\s+/)
+        .filter((word) => word.length > 2 && !MARK_STOPWORDS.has(word))
+        .map((word) => word.replace(/(ing|ed|es|s)$/, "")),
+    );
+  }
+
+  /**
+   * Mark a short answer without the model, so a quiz can still be completed
+   * offline or when the AI call fails. Approximate by design: it rewards
+   * overlap with the key ideas of the model answer.
+   */
+  function localGradeShortAnswer({ answer, response }) {
+    const expected = keywords(answer);
+    const given = keywords(response);
+    const cleaned = (value) =>
+      String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+    if (cleaned(response) && cleaned(response) === cleaned(answer)) {
+      return { score: 1, correct: true, feedback: "Exact match with the model answer.", markedBy: "offline" };
+    }
+    if (!expected.size) {
+      return {
+        score: 0,
+        correct: false,
+        feedback: "There is no model answer to compare against, so this could not be marked.",
+        markedBy: "offline",
+      };
+    }
+    let hits = 0;
+    for (const word of expected) if (given.has(word)) hits += 1;
+    const score = hits / expected.size;
+    const correct = score >= 0.55;
+    return {
+      score,
+      correct,
+      feedback: correct
+        ? `Covers the key idea (${Math.round(score * 100)}% of the key terms). Add your AI key for a fuller review.`
+        : `Missing key ideas from the model answer (${Math.round(score * 100)}% of key terms matched). Add your AI key for a fuller review.`,
+      markedBy: "offline",
+    };
+  }
+
+  function buildMarkPrompt({ question, answer, response }) {
+    return [
+      "You are marking one short-answer question for a student.",
+      "Mark on MEANING, not exact wording. Accept paraphrases, synonyms, abbreviations, different",
+      "ordering, extra correct detail, and equivalent terminology. Reject answers that contradict",
+      "the model answer or leave out its key idea.",
+      "",
+      `Question: ${question}`,
+      `Model answer: ${answer}`,
+      `Student answer: ${response}`,
+      "",
+      "Reply with ONLY this JSON object:",
+      '{"score":0,"correct":false,"feedback":"..."}',
+      "- score is 0-100, the share of the model answer's meaning the student got.",
+      "- correct is true when score is at least 60.",
+      "- feedback is 1-2 sentences: what was right, and what is missing if anything.",
+    ].join("\n");
+  }
+
+  /**
+   * Mark a short-answer response with the model, falling back to the offline
+   * marker when no key is set or the request fails.
+   *
+   * @returns {Promise<{score:number, correct:boolean, feedback:string, markedBy:string}>}
+   */
+  async function gradeShortAnswer({ apiKey, question, answer, response, signal }) {
+    const text = String(response || "").trim();
+    if (!text) {
+      return {
+        score: 0,
+        correct: false,
+        feedback: "No answer was entered.",
+        markedBy: "offline",
+      };
+    }
+    if (!apiKey) return localGradeShortAnswer({ answer, response: text });
+
+    try {
+      const { content } = await chat({
+        apiKey,
+        prompt: buildMarkPrompt({ question, answer, response: text }),
+        maxTokens: 512,
+        temperature: 0,
+        signal,
+      });
+      const parsed = parseJsonLoose(content) || {};
+      let score = Number(parsed.score);
+      if (!Number.isFinite(score)) score = parsed.correct === true ? 100 : 0;
+      if (score > 1 && score <= 100) score = score / 100;
+      score = Math.max(0, Math.min(1, score));
+      // Respect an explicit pass/fail verdict from the model, but keep them
+      // consistent with the score.
+      const correct = typeof parsed.correct === "boolean" ? parsed.correct : score >= 0.6;
+      const feedback =
+        typeof parsed.feedback === "string" && parsed.feedback.trim()
+          ? parsed.feedback.trim()
+          : correct
+            ? "Accepted — this matches the model answer."
+            : "Not quite — compare with the model answer.";
+      return { score, correct: correct && score > 0, feedback, markedBy: "ai" };
+    } catch (error) {
+      if (error && error.name === "AbortError") throw error;
+      console.warn("[StudyForge] AI marking failed; using the offline marker.", error);
+      const fallback = localGradeShortAnswer({ answer, response: text });
+      fallback.feedback = `AI marking was unavailable (${describeError(error)}). ${fallback.feedback}`;
+      return fallback;
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
    * Flashcards
    * ------------------------------------------------------------------ */
 
@@ -823,7 +951,7 @@
     return merged;
   }
 
-  Symus.ai = {
+  StudyForge.ai = {
     WORKER_URL,
     DEFAULT_MODEL,
     MODEL_FILTER,
@@ -842,6 +970,8 @@
     generateDocument,
     generateQuestions,
     normaliseQuestions,
+    gradeShortAnswer,
+    localGradeShortAnswer,
     generateFlashcards,
     normaliseFlashcards,
     buildFlashcardsPrompt,
@@ -851,4 +981,4 @@
     interleaveQuestionGroups,
     questionKey,
   };
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));

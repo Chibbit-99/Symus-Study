@@ -1,11 +1,11 @@
 /**
- * Symus Study — minimal, safe Markdown renderer.
+ * StudyForge — minimal, safe Markdown renderer.
  *
  * AI output is untrusted text, so everything is HTML-escaped first and only a
  * small, fixed set of Markdown constructs is converted afterwards. Only http,
  * https and mailto links are allowed.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
   const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -142,5 +142,5 @@
     return html.join("\n");
   }
 
-  Symus.md = { render, escapeHtml, inline };
-})((window.Symus = window.Symus || {}));
+  StudyForge.md = { render, escapeHtml, inline };
+})((window.StudyForge = window.StudyForge || {}));

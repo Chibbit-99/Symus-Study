@@ -1,5 +1,5 @@
 /**
- * Symus Study — processing pipeline.
+ * StudyForge — processing pipeline.
  *
  * One job runs at a time, in a queue:
  *
@@ -13,7 +13,7 @@
  * Uploaded files and extracted source text stay in memory only. What is
  * persisted is the generated study document and the questions.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
   const listeners = new Set();
@@ -37,7 +37,7 @@
       try {
         listener(current, queue);
       } catch (error) {
-        console.error("[Symus Study] Job listener failed:", error);
+        console.error("[StudyForge] Job listener failed:", error);
       }
     }
   }
@@ -73,9 +73,9 @@
 
   function cancelAll() {
     for (const item of queue.splice(0)) {
-      const resource = Symus.store.getResource(item.resourceId);
+      const resource = StudyForge.store.getResource(item.resourceId);
       if (resource) {
-        Symus.store.updateResource(resource.id, {
+        StudyForge.store.updateResource(resource.id, {
           status: "queued",
           statusMessage: "Cancelled before it started.",
         });
@@ -105,13 +105,13 @@
       if (error && error.name === "AbortError") {
         finishCancelled(current);
       } else {
-        const message = Symus.ai.describeError(error);
-        console.error("[Symus Study] Job failed:", error);
+        const message = StudyForge.ai.describeError(error);
+        console.error("[StudyForge] Job failed:", error);
         current.status = "error";
         current.error = message;
-        const resource = Symus.store.getResource(current.resourceId);
+        const resource = StudyForge.store.getResource(current.resourceId);
         if (resource) {
-          Symus.store.updateResource(resource.id, {
+          StudyForge.store.updateResource(resource.id, {
             status: "error",
             statusMessage: "",
             error: message,
@@ -132,9 +132,9 @@
   function finishCancelled(job) {
     job.status = "cancelled";
     job.step = "Cancelled";
-    const resource = Symus.store.getResource(job.resourceId);
+    const resource = StudyForge.store.getResource(job.resourceId);
     if (resource && resource.status === "processing") {
-      Symus.store.updateResource(resource.id, {
+      StudyForge.store.updateResource(resource.id, {
         status: resource.document ? "ready" : "queued",
         statusMessage: "Cancelled.",
       });
@@ -169,7 +169,7 @@
   }
 
   function requireKey() {
-    const key = Symus.store.getApiKey();
+    const key = StudyForge.store.getApiKey();
     if (!key) {
       throw new Error("Add your NVIDIA NIM API key in Settings before processing resources.");
     }
@@ -177,9 +177,9 @@
   }
 
   async function runPdfJob(job) {
-    const store = Symus.store;
-    const ai = Symus.ai;
-    const ocr = Symus.ocr;
+    const store = StudyForge.store;
+    const ai = StudyForge.ai;
+    const ocr = StudyForge.ocr;
     const settings = store.getSettings();
     const apiKey = requireKey();
     const file = job.file || sessionFiles.get(job.resourceId);
@@ -321,7 +321,7 @@
   }
 
   async function runTextJob(job) {
-    const store = Symus.store;
+    const store = StudyForge.store;
     const apiKey = requireKey();
     const text = job.text || "";
 
@@ -334,7 +334,7 @@
     });
     progress(job, { step: "Writing the study document…", progress: 10 });
 
-    const document = await Symus.ai.generateDocument({
+    const document = await StudyForge.ai.generateDocument({
       apiKey,
       text,
       meta: {
@@ -381,12 +381,12 @@
    *                    coverage: object[], failures: object[]}>}
    */
   async function collectAcrossResources(job, { target, generate }) {
-    const ai = Symus.ai;
+    const ai = StudyForge.ai;
     const apiKey = requireKey();
-    const kit = Symus.store.getKit(job.kitId);
+    const kit = StudyForge.store.getKit(job.kitId);
     if (!kit) throw new Error("That study kit no longer exists.");
 
-    const ready = Symus.store
+    const ready = StudyForge.store
       .resourcesInKit(kit.id)
       .filter((resource) => resource.document && resource.document.trim());
 
@@ -430,7 +430,7 @@
       } catch (error) {
         if (error && error.name === "AbortError") throw error;
         failures.push({ name: resource.name, message: ai.describeError(error) });
-        console.warn("[Symus Study] Pass failed for", resource.name, error);
+        console.warn("[StudyForge] Pass failed for", resource.name, error);
         return [];
       }
     };
@@ -474,7 +474,7 @@
 
   /** Merge per-resource groups, keeping de-duplication and interleaving. */
   function mergeGroups(groups, { dedupe }) {
-    return dedupe(Symus.ai.interleaveQuestionGroups(groups));
+    return dedupe(StudyForge.ai.interleaveQuestionGroups(groups));
   }
 
   function quizFailure(failures, what) {
@@ -488,7 +488,7 @@
    * de-duplicated and interleaved.
    */
   async function runQuizJob(job) {
-    const ai = Symus.ai;
+    const ai = StudyForge.ai;
     const target = Math.max(1, Math.min(job.count || 10, 25));
 
     progress(job, { step: `Planning ${target} question(s)…`, progress: 5 });
@@ -513,7 +513,7 @@
     if (!questions.length) throw new Error(quizFailure(failures, "questions"));
 
     const missing = coverage.filter((item) => item.produced === 0);
-    Symus.store.setKitQuiz(kit.id, {
+    StudyForge.store.setKitQuiz(kit.id, {
       generatedAt: new Date().toISOString(),
       items: questions,
       sourceCount: ready.length,
@@ -533,13 +533,13 @@
 
   /** Flashcards for a whole kit, allocated per resource like the questions. */
   async function runFlashcardJob(job) {
-    const ai = Symus.ai;
+    const ai = StudyForge.ai;
     const target = Math.max(1, Math.min(job.count || 20, 40));
     // Deck style: vocab/concept cards or exam-style questions.
     const style =
       job.style === "question" || job.style === "vocab"
         ? job.style
-        : Symus.store.getSettings().flashcardStyle || "vocab";
+        : StudyForge.store.getSettings().flashcardStyle || "vocab";
 
     progress(job, { step: `Planning ${target} flashcard(s)…`, progress: 5 });
 
@@ -566,7 +566,7 @@
     if (!cards.length) throw new Error(quizFailure(failures, "flashcards"));
 
     const missing = coverage.filter((item) => item.produced === 0);
-    Symus.store.setKitFlashcards(kit.id, {
+    StudyForge.store.setKitFlashcards(kit.id, {
       generatedAt: new Date().toISOString(),
       items: cards,
       style,
@@ -586,7 +586,7 @@
 
   /** A timed practice exam: multiple choice, allocated per resource. */
   async function runExamJob(job) {
-    const ai = Symus.ai;
+    const ai = StudyForge.ai;
     const target = Math.max(1, Math.min(job.count || 20, 40));
 
     progress(job, { step: `Planning a ${target}-question exam…`, progress: 5 });
@@ -616,7 +616,7 @@
       ? Math.min(180, Math.max(1, Math.round(job.durationMinutes)))
       : Math.max(5, Math.round((questions.length * 1.2) / 5) * 5);
 
-    Symus.store.setKitExam(kit.id, {
+    StudyForge.store.setKitExam(kit.id, {
       generatedAt: new Date().toISOString(),
       items: questions,
       durationMinutes: minutes,
@@ -641,7 +641,7 @@
       kind: "pdf",
       resourceId: resource.id,
       resourceName: resource.name,
-      subject: (Symus.store.getKit(resource.kitId) || {}).subject || "",
+      subject: (StudyForge.store.getKit(resource.kitId) || {}).subject || "",
       file,
       label: `Processing ${resource.name}`,
     });
@@ -652,7 +652,7 @@
       kind: "text",
       resourceId: resource.id,
       resourceName: resource.name,
-      subject: (Symus.store.getKit(resource.kitId) || {}).subject || "",
+      subject: (StudyForge.store.getKit(resource.kitId) || {}).subject || "",
       text,
       label: `Processing ${resource.name}`,
     });
@@ -688,7 +688,7 @@
     });
   }
 
-  Symus.jobs = {
+  StudyForge.jobs = {
     subscribe,
     enqueue,
     uploadPdf,
@@ -704,4 +704,4 @@
     isBusy,
     getSessionFile,
   };
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));

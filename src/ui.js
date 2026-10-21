@@ -1,5 +1,5 @@
 /**
- * Symus Study — interface
+ * StudyForge — interface
  *
  * Hash routes:
  *   #/                 dashboard (classes + study kits)
@@ -13,12 +13,12 @@
  * Rendering is a full rebuild of #view on store changes; user drafts in
  * textareas are captured and restored around it so typing is never lost.
  */
-(function (Symus) {
+(function (StudyForge) {
   "use strict";
 
-  const store = Symus.store;
-  const md = Symus.md;
-  const jobs = Symus.jobs;
+  const store = StudyForge.store;
+  const md = StudyForge.md;
+  const jobs = StudyForge.jobs;
   const esc = md.escapeHtml;
 
   const KIT_TABS = ["resources", "documents", "questions", "flashcards", "exam"];
@@ -36,9 +36,24 @@
   let query = "";
   let editingDocId = null;
   let docViewId = null;
-  let quizState = { selected: {}, revealed: {} };
+  // Quiz run. One question at a time: the answer is locked and marked the
+  // moment "Next" is pressed, and everything is saved when the quiz is
+  // submitted at the end.
+  let quizState = {
+    kitId: null,
+    status: "idle", // idle | running | finished
+    index: 0,
+    phase: "answering", // answering | marking | marked
+    answers: {}, // index -> { choice } | { text }
+    results: {}, // index -> { correct, score, feedback, markedBy, expected, given }
+    startedAt: 0,
+    attempt: null,
+  };
   // Flashcard deck position, kept per kit while the tab is open.
   let flashState = { kitId: null, index: 0, flipped: false, order: null, known: {}, again: {}, shuffled: false };
+  // Which classes / kits are open in the sidebar tree.
+  const sidebarOpen = { classes: new Set(), kits: new Set() };
+  let lastSidebarRoute = "";
   // Timed exam session. Lives in memory only: reloading the page abandons a run.
   let examState = { kitId: null, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
   let renderQueued = false;
@@ -65,6 +80,11 @@
     upload: '<path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M5 19h14"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4Z"/>',
     moon: '<path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>',
+    chevron: '<path d="M9 6l6 6-6 6"/>',
+    arrowLeft: '<path d="M15 5l-7 7 7 7"/>',
+    arrowRight: '<path d="M9 5l7 7-7 7"/>',
+    quiz: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.2-1 .8-1 1.4v.3"/><path d="M12 16.8h.01"/>',
+    flame: '<path d="M12 3c3.4 3.4 5 5.9 5 8.6A5 5 0 0 1 7 11.8C7 9 8.7 6.5 12 3Z"/><path d="M12 20a2.4 2.4 0 0 1-2.4-2.4c0-1.4 1-2.4 2.4-4 1.4 1.6 2.4 2.6 2.4 4A2.4 2.4 0 0 1 12 20Z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
   };
 
@@ -149,6 +169,19 @@
     examState = { kitId, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
   }
 
+  function resetQuiz(kitId) {
+    quizState = {
+      kitId,
+      status: "idle",
+      index: 0,
+      phase: "answering",
+      answers: {},
+      results: {},
+      startedAt: 0,
+      attempt: null,
+    };
+  }
+
   /** Deck order: natural, or a stable shuffle stored in flashState.order. */
   function deckOrder(kit) {
     const total = kit.flashcards ? kit.flashcards.items.length : 0;
@@ -226,7 +259,7 @@
         // Fresh kit: reset in-page interactions so answers and the document
         // picker do not leak between kits.
         lastQuizKey = route.id;
-        quizState = { selected: {}, revealed: {} };
+        resetQuiz(route.id);
         docViewId = null;
         resetDeck(route.id);
         if (examState.kitId !== route.id) resetExam(route.id);
@@ -268,40 +301,131 @@
     </button>`;
   }
 
+  /** The four study modes inside every kit, in the order the sidebar shows them. */
+  const KIT_SECTIONS = [
+    { tab: "documents", label: "Study guide", iconName: "book" },
+    { tab: "flashcards", label: "Flashcards", iconName: "cards" },
+    { tab: "questions", label: "Quiz", iconName: "quiz" },
+    { tab: "exam", label: "Practice test", iconName: "clock" },
+  ];
+
+  function kitNav(kit, state) {
+    const open = sidebarOpen.kits.has(kit.id);
+    const onKit = route.name === "kit" && route.id === kit.id;
+    const counts = {
+      documents: store.resourcesInKit(kit.id).filter((resource) => resource.document).length,
+      flashcards: kit.flashcards ? kit.flashcards.items.length : 0,
+      questions: kit.quiz ? kit.quiz.items.length : 0,
+      exam: kit.exam ? kit.exam.items.length : 0,
+    };
+    return `
+      <button class="nav-item nav-kit ${open ? "open" : ""} ${onKit ? "current" : ""}"
+        data-action="toggle-kit" data-id="${esc(kit.id)}"
+        aria-expanded="${open}" title="${esc(kit.name)}">
+        <span class="nav-caret">${icon("chevron")}</span>
+        <span class="nav-icon">${icon("kits")}</span>
+        <span class="nav-text">${esc(kit.name)}</span>
+        <span class="count">${plural(counts.questions + counts.flashcards, "item")}</span>
+      </button>
+      ${
+        open
+          ? `<div class="nav-children nav-sections">
+              ${KIT_SECTIONS.map((section) => {
+                const active = onKit && route.tab === section.tab;
+                return `<a class="nav-leaf ${active ? "active" : ""}" href="#/kit/${esc(kit.id)}/${section.tab}">
+                  <span class="nav-icon">${icon(section.iconName)}</span>
+                  <span class="nav-text">${esc(section.label)}</span>
+                  <span class="count">${counts[section.tab]}</span>
+                </a>`;
+              }).join("")}
+            </div>`
+          : ""
+      }`;
+  }
+
+  function classNav(cls, kits) {
+    const open = sidebarOpen.classes.has(cls.id);
+    return `
+      <div class="nav-tree ${open ? "open" : ""}">
+        <button class="nav-item nav-class" data-action="toggle-class" data-id="${esc(cls.id)}"
+          aria-expanded="${open}" title="${esc(cls.name)}">
+          <span class="nav-caret">${icon("chevron")}</span>
+          <span class="nav-icon">${icon("folder")}</span>
+          <span class="nav-text">${esc(cls.name)}</span>
+          <span class="count">${kits.length}</span>
+        </button>
+        ${
+          open
+            ? `<div class="nav-children">
+                ${
+                  kits.length
+                    ? kits.map((kit) => kitNav(kit, cls)).join("")
+                    : `<p class="nav-empty">No kits yet</p>`
+                }
+                <button class="nav-item nav-add" data-action="new-kit-in-class" data-id="${esc(cls.id)}" title="New kit in ${esc(cls.name)}">
+                  <span class="nav-icon">${icon("plus")}</span>
+                  <span class="nav-text">New kit</span>
+                </button>
+              </div>`
+            : ""
+        }
+      </div>`;
+  }
+
   function renderSidebar() {
     const state = store.get();
     const totalKits = state.kits.length;
     const onDashboard = route.name === "dashboard";
 
-    const main = [
-      navRow({
-        action: "filter-class",
-        label: "Dashboard",
-        iconName: "home",
-        count: totalKits,
-        active: onDashboard && !filterClassId,
-      }),
-    ];
+    // When the page changes, reveal the kit being viewed and its class. Only
+    // on a route change, so the user can still collapse them afterwards.
+    const routeKey = `${route.name}:${route.id || ""}:${route.tab || ""}`;
+    if (routeKey !== lastSidebarRoute) {
+      lastSidebarRoute = routeKey;
+      if (route.name === "kit") {
+        const kit = store.getKit(route.id);
+        if (kit) {
+          sidebarOpen.kits.add(kit.id);
+          if (kit.classId) sidebarOpen.classes.add(kit.classId);
+        }
+      }
+    }
 
-    const classes = state.classes.map((cls) =>
-      navRow({
-        action: "filter-class",
-        id: cls.id,
-        label: cls.name,
-        iconName: "folder",
-        count: state.kits.filter((kit) => kit.classId === cls.id).length,
-        active: onDashboard && filterClassId === cls.id,
-      }),
-    );
+    const uncategorised = state.kits.filter((kit) => !kit.classId);
 
     els.nav.innerHTML = `
       <div class="nav-group">
-        <div class="nav-label">Main</div>
-        ${main.join("")}
+        <div class="nav-label">Overview</div>
+        ${navRow({
+          action: "filter-class",
+          label: "Dashboard",
+          iconName: "home",
+          count: totalKits,
+          active: onDashboard && !filterClassId,
+        })}
       </div>
       <div class="nav-group">
-        <div class="nav-label">Classes</div>
-        ${classes.join("")}
+        <div class="nav-label-row">
+          <span class="nav-label">Classes</span>
+          <button class="icon-btn tiny" data-action="new-class" title="New class" aria-label="New class">
+            ${icon("plus")}
+          </button>
+        </div>
+        ${
+          state.classes.length
+            ? state.classes
+                .map((cls) => classNav(cls, state.kits.filter((kit) => kit.classId === cls.id)))
+                .join("")
+            : `<p class="nav-empty">No classes yet — create one to group your kits.</p>`
+        }
+        ${
+          uncategorised.length
+            ? `<div class="nav-tree open">
+                <div class="nav-subhead">Uncategorised</div>
+                <div class="nav-children">${uncategorised.map((kit) => kitNav(kit, null)).join("")}</div>
+              </div>`
+            : ""
+        }
         <button class="nav-item nav-add" data-action="new-class" title="New class">
           <span class="nav-icon">${icon("plus")}</span>
           <span class="nav-text">New class</span>
@@ -357,6 +481,23 @@
     const classes = filterClassId ? state.classes.filter((cls) => cls.id === filterClassId) : state.classes;
     const uncategorised = visibleKits.filter((kit) => !kit.classId);
 
+    const quizCount = state.kits.filter((kit) => kit.quiz).length;
+    const cardCount = state.kits.reduce(
+      (total, kit) => total + (kit.flashcards ? kit.flashcards.items.length : 0),
+      0,
+    );
+    const attempts = state.kits.reduce(
+      (total, kit) => total + (kit.quiz && kit.quiz.attempts ? kit.quiz.attempts.length : 0),
+      0,
+    );
+    const best = state.kits.reduce((top, kit) => {
+      const bestAttempt = ((kit.quiz && kit.quiz.attempts) || []).reduce(
+        (value, attempt) => Math.max(value, attempt.percent),
+        0,
+      );
+      return Math.max(top, bestAttempt);
+    }, 0);
+
     page.innerHTML = `
       <header class="page-head">
         <div class="page-title">
@@ -368,12 +509,18 @@
           <button class="btn primary" data-action="new-kit">New study kit</button>
         </div>
       </header>
-      <p class="page-sub">${plural(state.kits.length, "kit")} across ${plural(
-        state.classes.length,
-        "class",
-        "classes",
-      )} · ${plural(state.resources.length, "resource")}. Turn each resource into a study document, then questions, flashcards or a timed exam.</p>
+      <p class="page-sub">Turn your PDFs and notes into study guides, flashcards, quizzes and practice tests — every attempt is saved so you can watch yourself improve.</p>
       ${state.kits.length === 0 ? renderEmptyDashboard() : ""}
+      ${
+        state.kits.length
+          ? `<div class="stat-strip">
+              <div class="stat"><span class="stat-value">${state.kits.length}</span><span class="stat-label">Study kits</span></div>
+              <div class="stat"><span class="stat-value">${cardCount}</span><span class="stat-label">Flashcards</span></div>
+              <div class="stat"><span class="stat-value">${attempts}</span><span class="stat-label">Quiz attempts</span></div>
+              <div class="stat accent"><span class="stat-value">${attempts ? `${best}%` : "—"}</span><span class="stat-label">Best quiz score</span></div>
+            </div>`
+          : ""
+      }
       <div class="stack">
         ${classes
           .map((cls) => {
@@ -420,7 +567,7 @@
     return `
       <div class="empty hero">
         <h2>Create your first study kit</h2>
-        <p class="muted">A study kit holds resources — PDFs or pasted text. Symus Study turns each resource into a complete study document, then writes practice questions, flashcards and timed practice exams from it.</p>
+        <p class="muted">A study kit holds resources — PDFs or pasted text. StudyForge forges each one into a study guide, then writes flashcards, a quiz and a practice test from it. Quiz attempts are saved so you can track your progress.</p>
         <div class="row center">
           <button class="btn primary" data-action="new-kit">New study kit</button>
           <button class="btn" data-action="new-class">New class</button>
@@ -434,6 +581,8 @@
     const cls = kit.classId ? store.getClass(kit.classId) : null;
     const counts = [];
     if (kit.quiz) counts.push(plural(kit.quiz.items.length, "question"));
+    const quizAttempts = (kit.quiz && kit.quiz.attempts) || [];
+    const bestAttempt = quizAttempts.reduce((top, attempt) => Math.max(top, attempt.percent), 0);
     if (kit.flashcards) counts.push(plural(kit.flashcards.items.length, "card"));
     if (kit.exam) counts.push(`${kit.exam.items.length}-question exam`);
 
@@ -452,6 +601,7 @@
           <p class="kit-meta">${esc(kit.subject || status)}</p>
           ${kit.subject ? `<p class="kit-sub">${esc(status)}</p>` : ""}
           <p class="kit-sub">${generated ? `${esc(generated)} · ` : ""}updated ${esc(relativeTime(kit.updatedAt))}</p>
+          ${quizAttempts.length ? `<p class="kit-sub"><span class="pill accent tiny-pill">Best quiz ${bestAttempt}%</span></p>` : ""}
           ${cls ? `<div class="kit-tag"><span class="chip">${esc(cls.name)}</span></div>` : ""}
         </div>
         <div class="kit-actions">
@@ -469,10 +619,10 @@
     const withDocs = resources.filter((resource) => resource.document);
     const tabs = [
       { id: "resources", label: "Resources", count: resources.length, href: `#/kit/${kit.id}` },
-      { id: "documents", label: "Study documents", count: withDocs.length, href: `#/kit/${kit.id}/documents` },
+      { id: "documents", label: "Study guide", count: withDocs.length, href: `#/kit/${kit.id}/documents` },
       {
         id: "questions",
-        label: "Practice questions",
+        label: "Quiz",
         count: kit.quiz ? kit.quiz.items.length : 0,
         href: `#/kit/${kit.id}/questions`,
       },
@@ -484,7 +634,7 @@
       },
       {
         id: "exam",
-        label: "Practice exam",
+        label: "Practice test",
         count: kit.exam ? kit.exam.items.length : 0,
         href: `#/kit/${kit.id}/exam`,
       },
@@ -644,14 +794,14 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <h2>Practice questions</h2>
+            <h2>Quiz</h2>
             <p class="muted tiny">Written from all ${plural(withDocs.length, "study document")} in this kit: ${esc(
               sources.join(", "),
             )}.</p>
           </div>
           <div class="row tight">
             <button class="btn small ${quiz ? "" : "primary"}" data-action="make-quiz" data-id="${esc(kit.id)}">${
-              quiz ? "Regenerate" : "Generate questions"
+              quiz ? "New questions" : "Generate questions"
             }</button>
             ${
               quiz
@@ -692,64 +842,273 @@
       </section>`;
   }
 
+  /* -------------------------------- quiz --------------------------- */
+
   function renderKitQuiz(kit) {
     const quiz = kit.quiz;
     if (!quiz) {
-      return `<p class="muted small">No questions yet. Generate a set and they will be saved with this study kit.</p>`;
+      return `<p class="muted small">No questions yet. Generate a set and it is saved with this study kit.</p>`;
     }
+    if (quizState.kitId !== kit.id) resetQuiz(kit.id);
+    if (quizState.status === "running") return renderQuizRunner(kit);
+    if (quizState.status === "finished") return renderQuizResult(kit);
+    return renderQuizIntro(kit);
+  }
 
-    const state = quizState;
-    const items = quiz.items;
-    const answered = Object.keys(state.selected).length + Object.keys(state.revealed).length;
+  /** Every saved run for this kit, newest first. */
+  function renderAttempts(kit) {
+    const attempts = (kit.quiz && kit.quiz.attempts) || [];
+    const best = attempts.reduce(
+      (top, attempt) => (attempt.percent > (top ? top.percent : -1) ? attempt : top),
+      null,
+    );
 
     return `
-      <div class="quiz-meta">
-        <span class="muted tiny">${plural(items.length, "question")} · generated ${esc(relativeTime(quiz.generatedAt))} · ${answered} answered</span>
+      <section class="panel attempts-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Past attempts</h2>
+            <p class="muted tiny">Saved in this browser — every submitted quiz run is kept here.</p>
+          </div>
+          ${best ? `<span class="pill accent">Best ${best.percent}%</span>` : ""}
+        </div>
+        ${
+          attempts.length
+            ? `<ol class="attempt-list">${attempts
+                .map(
+                  (attempt) => `
+                    <li class="attempt-row">
+                      <span class="attempt-score ${attempt.percent >= 70 ? "good" : attempt.percent >= 50 ? "mid" : "low"}">${attempt.percent}%</span>
+                      <span class="attempt-main">
+                        <strong>${attempt.correct}/${attempt.total} correct</strong>
+                        <span class="muted tiny">${esc(new Date(attempt.takenAt).toLocaleString())}${
+                          attempt.secondsUsed ? ` · ${formatClock(attempt.secondsUsed)}` : ""
+                        }</span>
+                      </span>
+                      <span class="attempt-bar"><span style="width:${attempt.percent}%"></span></span>
+                      <button class="icon-btn danger" title="Delete this attempt" data-action="delete-quiz-attempt"
+                        data-id="${esc(attempt.id)}">×</button>
+                    </li>`,
+                )
+                .join("")}</ol>`
+            : `<p class="muted small">No attempts yet — finish a quiz and your score lands here.</p>`
+        }
+      </section>`;
+  }
+
+  function renderQuizIntro(kit) {
+    const quiz = kit.quiz;
+    const attempts = quiz.attempts || [];
+    const best = attempts.reduce((top, attempt) => Math.max(top, attempt.percent), 0);
+    const shortCount = quiz.items.filter((item) => item.type === "short").length;
+    const choiceCount = quiz.items.length - shortCount;
+
+    return `
+      <div class="quiz-hero">
+        <div class="quiz-hero-text">
+          <p class="eyebrow">Ready when you are</p>
+          <h3>${plural(quiz.items.length, "question")}, one at a time</h3>
+          <p class="muted small">
+            Answer a question, press <strong>Mark &amp; next</strong>, and it is marked on the spot and locked.
+            Finish every question to submit the quiz and see your result.
+          </p>
+          <div class="quiz-facts">
+            <span class="pill">${plural(choiceCount, "multiple choice question")}</span>
+            ${shortCount ? `<span class="pill">${plural(shortCount, "short answer")} · AI marked</span>` : ""}
+            ${attempts.length ? `<span class="pill accent">Best ${best}%</span>` : `<span class="pill">No attempts yet</span>`}
+          </div>
+        </div>
+        <button class="btn primary lg" data-action="start-quiz">Start quiz</button>
       </div>
-      <ol class="quiz">
-        ${items
-          .map((item, index) => {
-            if (item.type === "mcq") {
-              const selected = state.selected[index];
-              return `
-                <li class="q">
-                  <p class="q-text">${esc(item.question)}</p>
-                  <div class="options">
-                    ${item.options
-                      .map((option, optionIndex) => {
-                        let cls = "option";
-                        if (selected !== undefined) {
-                          if (optionIndex === item.answerIndex) cls += " correct";
-                          else if (optionIndex === selected) cls += " wrong";
-                        }
-                        return `<button class="${cls}" data-action="answer-mcq" data-q="${index}" data-opt="${optionIndex}">
-                          <span class="opt-letter">${String.fromCharCode(65 + optionIndex)}</span>
-                          <span>${esc(option)}</span>
-                        </button>`;
-                      })
-                      .join("")}
-                  </div>
-                  ${
-                    selected !== undefined && item.explanation
-                      ? `<p class="explanation">${esc(item.explanation)}</p>`
-                      : ""
-                  }
-                </li>`;
-            }
-            const revealed = state.revealed[index];
+      ${renderAttempts(kit)}`;
+  }
+
+  function renderQuizDots(items) {
+    return `<div class="quiz-dots" aria-hidden="true">${items
+      .map((_, index) => {
+        const result = quizState.results[index];
+        const current = index === quizState.index && quizState.status === "running";
+        const status = result ? (result.correct ? "ok" : "bad") : "";
+        return `<span class="quiz-dot ${status}${current ? " current" : ""}"></span>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function renderMcqOptions(item, answer, result, locked) {
+    const chosen = answer && Number.isInteger(answer.choice) ? answer.choice : undefined;
+    return `<div class="options options-quiz">${item.options
+      .map((option, optionIndex) => {
+        const letter = String.fromCharCode(65 + optionIndex);
+        if (!locked) {
+          return `<button class="option ${chosen === optionIndex ? "selected" : ""}"
+            data-action="quiz-choose" data-opt="${optionIndex}">
+            <span class="opt-letter">${letter}</span>
+            <span>${esc(option)}</span>
+          </button>`;
+        }
+        let cls = "option static";
+        if (optionIndex === item.answerIndex) cls += " correct";
+        else if (optionIndex === chosen) cls += " wrong";
+        return `<div class="${cls}">
+          <span class="opt-letter">${letter}</span>
+          <span>${esc(option)}</span>
+          ${optionIndex === item.answerIndex ? '<span class="opt-flag">Correct</span>' : ""}
+          ${optionIndex === chosen && optionIndex !== item.answerIndex ? '<span class="opt-flag wrong">Your answer</span>' : ""}
+        </div>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function renderShortAnswer(item, answer, result, locked) {
+    const text = answer && typeof answer.text === "string" ? answer.text : "";
+    // The draft key is per question so a typed answer never carries over to the
+    // next short-answer question.
+    return `
+      <div class="short-wrap">
+        <label class="label" for="quiz-answer">Your answer</label>
+        <textarea id="quiz-answer" class="short-input" rows="5" data-quiz-input data-draft="quiz-short-${quizState.index}"
+          placeholder="Write your answer in your own words…" ${locked ? "disabled" : ""}>${esc(text)}</textarea>
+        <p class="hint">Marked by AI against the model answer. Different wording, synonyms and extra correct detail are accepted.</p>
+      </div>`;
+  }
+
+  function renderQuizFeedback(item, result) {
+    const percent = Math.round((result.score || 0) * 100);
+    const marker = result.markedBy === "ai" ? "marked by AI" : result.markedBy === "offline" ? "marked offline" : "marked automatically";
+    return `
+      <div class="quiz-feedback ${result.correct ? "ok" : "bad"}">
+        <div class="feedback-head">
+          <span class="feedback-icon">${result.correct ? "✓" : "→"}</span>
+          <strong>${result.correct ? "Correct" : "Not quite"}</strong>
+          ${item.type === "short" ? `<span class="pill tiny-pill">${percent}% · ${esc(marker)}</span>` : ""}
+        </div>
+        ${item.type === "short" && result.feedback ? `<p class="feedback-note">${esc(result.feedback)}</p>` : ""}
+        ${
+          item.type === "short" || !result.correct
+            ? `<p class="feedback-answer"><strong>Model answer:</strong> ${esc(item.answer)}</p>`
+            : ""
+        }
+        ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}
+      </div>`;
+  }
+
+  function renderQuizRunner(kit) {
+    const quiz = kit.quiz;
+    const items = quiz.items;
+    const index = Math.min(quizState.index, items.length - 1);
+    const item = items[index];
+    const answer = quizState.answers[index];
+    const result = quizState.results[index];
+    const marked = quizState.phase === "marked" && Boolean(result);
+    const marking = quizState.phase === "marking";
+    const markedCount = Object.keys(quizState.results).length;
+    const correctSoFar = Object.values(quizState.results).filter((entry) => entry.correct).length;
+    const isLast = index === items.length - 1;
+    const hasAnswer =
+      item.type === "mcq"
+        ? Boolean(answer && Number.isInteger(answer.choice))
+        : Boolean(answer && answer.text && answer.text.trim());
+
+    const label = marking
+      ? "Marking…"
+      : marked
+        ? isLast
+          ? "See result"
+          : "Next question"
+        : isLast
+          ? "Finish & mark"
+          : "Mark & next";
+
+    return `
+      <div class="quiz-shell">
+        <header class="quiz-top">
+          <div class="quiz-progress-wrap">
+            <div class="quiz-progress-text">
+              <strong>Question ${index + 1}</strong><span class="muted">of ${items.length}</span>
+              <span class="quiz-score-chip">${correctSoFar} correct</span>
+            </div>
+            ${renderQuizDots(items)}
+          </div>
+          <button class="btn ghost small" data-action="quit-quiz">Exit quiz</button>
+        </header>
+
+        <article class="quiz-card ${marked ? (result.correct ? "is-correct" : "is-wrong") : ""}">
+          <div class="quiz-q-head">
+            <span class="q-badge">${item.type === "mcq" ? "Multiple choice" : "Short answer"}</span>
+            ${marked ? `<span class="badge ${result.correct ? "ready" : "error"}">${result.correct ? "Correct" : "Not quite"}</span>` : ""}
+          </div>
+          <h2 class="quiz-q-text">${esc(item.question)}</h2>
+          ${item.type === "mcq" ? renderMcqOptions(item, answer, result, marked || marking) : renderShortAnswer(item, answer, result, marked || marking)}
+          ${marked ? renderQuizFeedback(item, result) : ""}
+        </article>
+
+        <footer class="quiz-foot">
+          <span class="muted tiny">${
+            marked ? "Locked in — answers cannot be changed." : `${markedCount} of ${items.length} marked · answers lock when marked`
+          }</span>
+          <button class="btn primary" data-action="quiz-next" ${marking || (!marked && !hasAnswer) ? "disabled" : ""}>
+            ${marking ? '<span class="spinner"></span>' : ""}${label}
+          </button>
+        </footer>
+      </div>`;
+  }
+
+  function gradeLabel(percent) {
+    if (percent >= 85) return "Outstanding";
+    if (percent >= 70) return "Solid work";
+    if (percent >= 50) return "Getting there";
+    return "Needs another pass";
+  }
+
+  function renderQuizResult(kit) {
+    const quiz = kit.quiz;
+    const attempt = quizState.attempt;
+    if (!attempt) return renderQuizIntro(kit);
+    const percent = attempt.percent;
+    const shortCount = attempt.answers.filter((entry) => entry.type === "short").length;
+
+    return `
+      <div class="result-hero">
+        <div class="score-ring" style="--score:${percent}">
+          <span class="score-ring-value">${percent}<small>%</small></span>
+        </div>
+        <div class="result-hero-text">
+          <p class="eyebrow">Quiz submitted</p>
+          <h3>${esc(gradeLabel(percent))}</h3>
+          <p class="muted small">
+            ${attempt.correct} of ${attempt.total} correct${
+              attempt.secondsUsed ? ` · ${formatClock(attempt.secondsUsed)}` : ""
+            }${shortCount ? ` · ${plural(shortCount, "AI-marked short answer")}` : ""}
+          </p>
+          <div class="row tight">
+            <button class="btn primary" data-action="retry-quiz">Try again</button>
+            <button class="btn" data-action="make-quiz" data-id="${esc(kit.id)}">New questions</button>
+            <button class="btn ghost" data-action="quiz-back">Back to overview</button>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="review-head">Question review</h3>
+      <ol class="quiz review-list">
+        ${attempt.answers
+          .map((entry, index) => {
+            const item = quiz.items[index] || {};
             return `
-              <li class="q">
-                <p class="q-text">${esc(item.question)}</p>
-                ${
-                  revealed
-                    ? `<p class="answer"><strong>Model answer:</strong> ${esc(item.answer)}</p>
-                       ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}`
-                    : `<button class="btn small" data-action="reveal" data-q="${index}">Show model answer</button>`
-                }
+              <li class="review-item ${entry.correct ? "q-correct" : "q-wrong"}">
+                <div class="review-item-head">
+                  <span class="q-number">${index + 1}</span>
+                  <span class="badge ${entry.correct ? "ready" : "error"}">${entry.correct ? "Correct" : "Incorrect"}</span>
+                  ${entry.type === "short" ? `<span class="pill tiny-pill">${Math.round(entry.score * 100)}% · ${esc(entry.markedBy === "ai" ? "AI marked" : "offline marked")}</span>` : ""}
+                </div>
+                <p class="q-text">${esc(entry.question || item.question || "")}</p>
+                <p class="answer-line"><span class="muted">Your answer:</span> ${esc(entry.given || "—")}</p>
+                ${entry.correct ? "" : `<p class="answer-line"><span class="muted">Model answer:</span> ${esc(entry.expected)}</p>`}
+                ${entry.feedback ? `<p class="explanation">${esc(entry.feedback)}</p>` : item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}
               </li>`;
           })
           .join("")}
-      </ol>`;
+      </ol>
+      ${renderAttempts(kit)}`;
   }
 
   /* ----------------------------- flashcards ------------------------ */
@@ -839,27 +1198,42 @@
           <span class="muted tiny">${knownCount} known${againCount ? ` · ${againCount} to review` : ""}</span>
         </div>
         <div class="deck-meter"><span style="width:${percent}%"></span></div>
-        <button class="flashcard ${flashState.flipped ? "flipped" : ""}" data-action="flip-card" aria-label="Flashcard">
-          <span class="fc-side">${flashState.flipped ? backLabel : frontLabel}</span>
-          <span class="fc-text">${esc(flashState.flipped ? card.back : card.front)}</span>
-          <span class="fc-hint">${
-            flashState.flipped ? "Click to see the prompt again" : "Click or press Space to reveal"
-          }</span>
-        </button>
+
+        <div class="fc-stage">
+          <button class="flashcard ${flashState.flipped ? "is-flipped" : ""}" data-action="flip-card"
+            aria-label="Flashcard — click to flip" aria-pressed="${flashState.flipped}">
+            <span class="fc-inner">
+              <span class="fc-face fc-front">
+                <span class="fc-side">${frontLabel}</span>
+                <span class="fc-text">${esc(card.front)}</span>
+                <span class="fc-hint">Click or press Space to flip</span>
+              </span>
+              <span class="fc-face fc-back">
+                <span class="fc-side">${backLabel}</span>
+                <span class="fc-text">${esc(card.back)}</span>
+                <span class="fc-hint">Click or press Space to flip back</span>
+              </span>
+            </span>
+          </button>
+        </div>
+
         ${card.source ? `<p class="muted tiny center">From ${esc(card.source)}</p>` : ""}
-        <div class="row center">
-          <button class="btn small" data-action="prev-card" ${position === 0 ? "disabled" : ""}>Previous</button>
-          <button class="btn small primary" data-action="flip-card">${
-            flashState.flipped ? "Show prompt" : "Show answer"
-          }</button>
-          <button class="btn small" data-action="next-card" ${
-            position >= order.length - 1 ? "disabled" : ""
-          }>Next</button>
+
+        <div class="fc-controls">
+          <button class="icon-btn" data-action="prev-card" title="Previous card" aria-label="Previous card"
+            ${position === 0 ? "disabled" : ""}>${icon("arrowLeft")}</button>
+          <button class="btn small primary fc-flip-btn" data-action="flip-card">
+            <span data-flip-label>${flashState.flipped ? "Show prompt" : "Show answer"}</span>
+          </button>
+          <button class="icon-btn" data-action="next-card" title="Next card" aria-label="Next card"
+            ${position >= order.length - 1 ? "disabled" : ""}>${icon("arrowRight")}</button>
         </div>
+
         <div class="row center tight">
-          <button class="btn small ghost" data-action="card-again">Still learning</button>
-          <button class="btn small ghost" data-action="card-known">Got it</button>
+          <button class="btn small again" data-action="card-again">Still learning</button>
+          <button class="btn small known" data-action="card-known">Got it</button>
         </div>
+
         <div class="row center tight deck-tools">
           <button class="btn small ghost" data-action="shuffle-cards">Shuffle</button>
           <button class="btn small ghost" data-action="restart-cards">Restart</button>
@@ -888,7 +1262,7 @@
         <section class="panel">
           <div class="panel-head">
             <div>
-              <h2>Practice exam</h2>
+              <h2>Practice test</h2>
               <p class="muted tiny">A timed, multiple-choice paper written from all ${plural(
                 withDocs.length,
                 "study document",
@@ -917,7 +1291,7 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <h2>Practice exam</h2>
+            <h2>Practice test</h2>
             <p class="muted tiny">Written from all ${plural(exam.sourceCount || exam.sourceNames.length, "study document")} in this kit.</p>
           </div>
           <div class="row tight">
@@ -1090,9 +1464,9 @@
           </p>
         </div>
         <div class="row">
-          <a class="btn" href="#/kit/${esc(resource.kitId)}/questions">Practice questions</a>
+          <a class="btn" href="#/kit/${esc(resource.kitId)}/questions">Quiz</a>
           <a class="btn" href="#/kit/${esc(resource.kitId)}/flashcards">Flashcards</a>
-          <a class="btn" href="#/kit/${esc(resource.kitId)}/exam">Practice exam</a>
+          <a class="btn" href="#/kit/${esc(resource.kitId)}/exam">Practice test</a>
           ${resource.type === "pdf" && !processing ? `<button class="btn" data-action="rerun-resource" data-id="${esc(resource.id)}">Re-run extraction</button>` : ""}
           <button class="btn danger" data-action="delete-resource" data-id="${esc(resource.id)}">Delete</button>
         </div>
@@ -1353,19 +1727,19 @@
   const CUSTOM_MODEL = "__custom__";
 
   function modelFilterLabel() {
-    return Symus.ai.MODEL_FILTER.join(", ");
+    return StudyForge.ai.MODEL_FILTER.join(", ");
   }
 
   /** Options for the model select, always including the currently saved model. */
   function modelOptionsHtml(currentModel) {
     const cached = modelCache.models;
-    const ids = new Set([currentModel, Symus.ai.DEFAULT_MODEL, ...cached.map((model) => model.id)].filter(Boolean));
+    const ids = new Set([currentModel, StudyForge.ai.DEFAULT_MODEL, ...cached.map((model) => model.id)].filter(Boolean));
     const options = [...ids]
       .sort((a, b) => a.localeCompare(b))
       .map(
         (id) =>
           `<option value="${esc(id)}" ${id === currentModel ? "selected" : ""}>${esc(id)}${
-            id === Symus.ai.DEFAULT_MODEL ? " (default)" : ""
+            id === StudyForge.ai.DEFAULT_MODEL ? " (default)" : ""
           }</option>`,
       );
     options.push(`<option value="${CUSTOM_MODEL}" ${ids.has(currentModel) ? "" : "selected"}>Custom model id…</option>`);
@@ -1411,7 +1785,7 @@
     if (statusEl) statusEl.textContent = "Loading models from NVIDIA…";
 
     try {
-      const { models } = await Symus.ai.listModels({ apiKey });
+      const { models } = await StudyForge.ai.listModels({ apiKey });
       modelCache.models = models;
       modelCache.loadedAt = Date.now();
       const saved = readModelField(root) || store.getSettings().model;
@@ -1429,7 +1803,7 @@
         }
       }
     } catch (error) {
-      if (statusEl) statusEl.textContent = "Could not load models: " + Symus.ai.describeError(error);
+      if (statusEl) statusEl.textContent = "Could not load models: " + StudyForge.ai.describeError(error);
     } finally {
       if (button) button.disabled = false;
     }
@@ -1445,7 +1819,7 @@
         <div class="field">
           <label for="set-key">NVIDIA NIM API key</label>
           <input id="set-key" type="password" autocomplete="off" spellcheck="false" value="${esc(settings.apiKey)}" placeholder="nvapi-…">
-          <span class="hint">Saved in this browser's localStorage and sent only to the Symus Worker → NVIDIA NIM.</span>
+          <span class="hint">Saved in this browser's localStorage and sent only to the StudyForge Worker → NVIDIA NIM.</span>
         </div>
         <div class="field">
           <label for="set-model">Model</label>
@@ -1455,7 +1829,7 @@
             <span class="hint" id="set-model-status">Only ${esc(modelFilterLabel())} models are listed.</span>
           </div>
           <input id="set-model-custom" type="text" placeholder="vendor/model-id" hidden>
-          <span class="hint">The list comes from your NVIDIA account through the Symus Worker, filtered to the supported model families.</span>
+          <span class="hint">The list comes from your NVIDIA account through the StudyForge Worker, filtered to the supported model families.</span>
         </div>
         <div class="field-row">
           <div class="field"><label for="set-lang">OCR language</label>
@@ -1496,11 +1870,11 @@
           <span class="hint">The default for new decks. You can still pick the other style when generating one.</span>
         </div>
         <div class="notice subtle">
-          <strong>Build:</strong> ${esc((globalThis.SYMUS_CONFIG || {}).version || "unknown")}
+          <strong>Build:</strong> ${esc((globalThis.STUDYFORGE_CONFIG || {}).version || "unknown")}
           <span class="tiny">— if this is not the build you expect, hard-reload (Ctrl/Cmd-Shift-R).</span><br>
           <strong>Model:</strong> ${esc(settings.model)}<br>
           <strong>Storage:</strong> ${(store.storageBytes() / 1024).toFixed(0)} KB used in localStorage.
-          Study documents and questions are saved locally; uploaded files and their raw text are never stored.
+          Study guides and quiz results are saved locally; uploaded files and their raw text are never stored.
         </div>
         <div class="notice error-soft">
           <strong>Danger zone</strong>
@@ -1652,6 +2026,167 @@
     return lines.join("\n");
   }
 
+  /**
+   * Flip the visible card by toggling a class on the live element instead of
+   * rebuilding the view — that is what lets the 3D flip animate.
+   */
+  function flipCard() {
+    const card = els.view.querySelector(".flashcard");
+    flashState.flipped = !flashState.flipped;
+    if (!card) {
+      render();
+      return;
+    }
+    card.classList.toggle("is-flipped", flashState.flipped);
+    card.setAttribute("aria-pressed", String(flashState.flipped));
+    const label = card.parentElement.parentElement.querySelector("[data-flip-label]");
+    if (label) label.textContent = flashState.flipped ? "Show prompt" : "Show answer";
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Quiz run
+   * ------------------------------------------------------------------ */
+
+  function startQuiz(kitId) {
+    const kit = store.getKit(kitId || quizState.kitId);
+    if (!kit || !kit.quiz || !kit.quiz.items.length) {
+      toast("Generate a quiz first.", "error");
+      return;
+    }
+    quizState = {
+      kitId: kit.id,
+      status: "running",
+      index: 0,
+      phase: "answering",
+      answers: {},
+      results: {},
+      startedAt: Date.now(),
+      attempt: null,
+    };
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** The current answer, read from state (and the live textarea for short answers). */
+  function currentAnswer(item, index) {
+    if (item.type !== "short") return quizState.answers[index] || null;
+    const field = els.view.querySelector("[data-quiz-input]");
+    if (field) quizState.answers[index] = { text: field.value };
+    return quizState.answers[index] || null;
+  }
+
+  function hasUsableAnswer(item, answer) {
+    if (!answer) return false;
+    if (item.type === "mcq") return Number.isInteger(answer.choice);
+    return typeof answer.text === "string" && answer.text.trim().length > 0;
+  }
+
+  /**
+   * The single "Next" button. Before marking it locks and marks the answer;
+   * after marking it moves on (or submits on the last question).
+   */
+  async function quizNext() {
+    if (quizState.status !== "running" || quizState.phase === "marking") return;
+    const kit = store.getKit(quizState.kitId);
+    if (!kit || !kit.quiz) return;
+    const items = kit.quiz.items;
+    const index = Math.min(quizState.index, items.length - 1);
+    const item = items[index];
+
+    if (quizState.phase === "marked") {
+      if (index >= items.length - 1) {
+        finishQuiz();
+      } else {
+        quizState.index = index + 1;
+        quizState.phase = "answering";
+        render();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      return;
+    }
+
+    const answer = currentAnswer(item, index);
+    if (!hasUsableAnswer(item, answer)) {
+      toast(item.type === "mcq" ? "Choose an option first." : "Write an answer first.", "error");
+      return;
+    }
+
+    quizState.phase = "marking";
+    render();
+
+    let result;
+    if (item.type === "mcq") {
+      const correct = answer.choice === item.answerIndex;
+      result = {
+        correct,
+        score: correct ? 1 : 0,
+        feedback: "",
+        markedBy: "auto",
+        expected: item.options[item.answerIndex] || item.answer,
+        given: item.options[answer.choice] || "",
+      };
+    } else {
+      const grade = await StudyForge.ai.gradeShortAnswer({
+        apiKey: store.getApiKey(),
+        question: item.question,
+        answer: item.answer,
+        response: answer.text,
+      });
+      result = { ...grade, expected: item.answer, given: answer.text };
+    }
+
+    // The user may have left the quiz while the AI was marking.
+    if (quizState.kitId !== kit.id || quizState.status !== "running") return;
+    quizState.results[index] = result;
+    quizState.phase = "marked";
+    render();
+  }
+
+  function finishQuiz() {
+    const kit = store.getKit(quizState.kitId);
+    if (!kit || !kit.quiz) return;
+    const items = kit.quiz.items;
+    const answers = items.map((item, index) => {
+      const result = quizState.results[index] || {};
+      const given = quizState.answers[index] || {};
+      return {
+        type: item.type,
+        question: item.question,
+        given:
+          item.type === "mcq"
+            ? given.choice !== undefined && item.options[given.choice] !== undefined
+              ? item.options[given.choice]
+              : ""
+            : given.text || "",
+        expected: result.expected || item.answer || item.options[item.answerIndex] || "",
+        correct: result.correct === true,
+        score: Number.isFinite(result.score) ? result.score : 0,
+        feedback: result.feedback || "",
+        markedBy: result.markedBy || "auto",
+      };
+    });
+    const correct = answers.filter((entry) => entry.correct).length;
+    const attempt = {
+      id: `att_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      takenAt: new Date().toISOString(),
+      correct,
+      total: items.length,
+      secondsUsed: Math.max(0, Math.round((Date.now() - quizState.startedAt) / 1000)),
+      answers,
+    };
+
+    store.addKitQuizAttempt(kit.id, attempt);
+    quizState.status = "finished";
+    quizState.phase = "marked";
+    quizState.attempt = attempt;
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast(
+      `Quiz submitted — ${correct}/${items.length} correct.`,
+      correct / Math.max(1, items.length) >= 0.5 ? "success" : "info",
+    );
+  }
+
   /* ------------------------------------------------------------------ *
    * Timed exam
    * ------------------------------------------------------------------ */
@@ -1789,7 +2324,7 @@
     const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
 
     openModal({
-      title: "Build a practice exam",
+      title: "Build a practice test",
       confirmLabel: "Build exam",
       body: `
         <div class="notice subtle">
@@ -1834,13 +2369,14 @@
     const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
 
     openModal({
-      title: "Practice questions",
+      title: "Generate quiz questions",
       confirmLabel: "Generate",
       body: `
         <div class="notice subtle">
           Questions are spread across <strong>all ${plural(withDocs.length, "study document")}</strong> in
           “${esc(kit.name)}”. Each resource is asked for its own share, so every one of them is covered
           rather than the model focusing on a single document.
+          <br><br>Questions are shown one at a time; short answers are marked by AI as you go.
         </div>
         <div class="field-row">
           <div class="field"><label for="quiz-count">How many questions</label>
@@ -1864,9 +2400,9 @@
         if (!requireKey()) return false;
         const count = Number(root.querySelector("#quiz-count").value);
         const difficulty = root.querySelector("#quiz-level").value;
-        quizState = { selected: {}, revealed: {} };
+        resetQuiz(kit.id);
         jobs.makeQuiz(kit, count, difficulty);
-        toast("Generating practice questions…");
+        toast("Generating quiz questions…");
       },
     });
   }
@@ -1922,7 +2458,7 @@
   }
 
   function safeFileName(name, extension) {
-    const base = String(name).replace(/[\\/:*?"<>|]+/g, " ").trim() || "symus";
+    const base = String(name).replace(/[\\/:*?"<>|]+/g, " ").trim() || "studyforge";
     return `${base}.${extension}`;
   }
 
@@ -1976,6 +2512,20 @@
         if (route.name !== "dashboard") navigate("#/");
         else render();
         break;
+      case "toggle-class":
+        if (sidebarOpen.classes.has(id)) sidebarOpen.classes.delete(id);
+        else sidebarOpen.classes.add(id);
+        renderSidebar();
+        break;
+      case "toggle-kit":
+        if (sidebarOpen.kits.has(id)) sidebarOpen.kits.delete(id);
+        else sidebarOpen.kits.add(id);
+        renderSidebar();
+        break;
+      case "new-kit-in-class":
+        sidebarOpen.classes.add(id);
+        openNewKit(id);
+        break;
       case "new-kit":
         openNewKit();
         break;
@@ -1984,7 +2534,7 @@
         break;
       case "export-backup":
         download(
-          `symus-study-backup-${new Date().toISOString().slice(0, 10)}.json`,
+          `studyforge-backup-${new Date().toISOString().slice(0, 10)}.json`,
           store.exportData(),
           "application/json",
         );
@@ -2126,11 +2676,9 @@
         }
         break;
       }
-      case "flip-card": {
-        flashState.flipped = !flashState.flipped;
-        render();
+      case "flip-card":
+        flipCard();
         break;
-      }
       case "next-card":
         moveCard(1);
         break;
@@ -2215,21 +2763,54 @@
         docViewId = id;
         render();
         break;
-      case "answer-mcq": {
-        const index = Number(actionEl.dataset.q);
-        quizState.selected[index] = Number(actionEl.dataset.opt);
+      case "start-quiz":
+      case "retry-quiz": {
+        startQuiz(id);
+        break;
+      }
+      case "quiz-choose": {
+        if (quizState.status !== "running" || quizState.phase !== "answering") break;
+        quizState.answers[quizState.index] = { choice: Number(actionEl.dataset.opt) };
         render();
         break;
       }
-      case "reveal": {
-        const index = Number(actionEl.dataset.q);
-        quizState.revealed[index] = true;
+      case "quiz-next":
+        quizNext();
+        break;
+      case "quit-quiz": {
+        openModal({
+          title: "Leave this quiz?",
+          body: `<p>Your progress in this run is not saved until you submit the quiz on the last question.</p>`,
+          confirmLabel: "Leave quiz",
+          danger: true,
+          onConfirm: () => {
+            resetQuiz(quizState.kitId);
+            render();
+          },
+        });
+        break;
+      }
+      case "quiz-back":
+        resetQuiz(quizState.kitId);
         render();
+        break;
+      case "delete-quiz-attempt": {
+        const kitId = quizState.kitId || (route.name === "kit" ? route.id : null);
+        if (kitId && store.deleteKitQuizAttempt(kitId, id)) toast("Attempt deleted.", "success");
         break;
       }
       default:
         break;
     }
+  }
+
+  /** Keep short-answer text in state as it is typed, and gate the Next button. */
+  function onInput(event) {
+    const field = event.target.closest("[data-quiz-input]");
+    if (!field || quizState.status !== "running") return;
+    quizState.answers[quizState.index] = { text: field.value };
+    const next = els.view.querySelector('[data-action="quiz-next"]');
+    if (next) next.disabled = !field.value.trim();
   }
 
   function onDrop(event) {
@@ -2271,6 +2852,7 @@
     };
 
     els.view.addEventListener("click", onClick);
+    els.view.addEventListener("input", onInput);
     els.view.addEventListener("dragover", onDragOver);
     els.view.addEventListener("dragleave", onDragLeave);
     els.view.addEventListener("drop", onDrop);
@@ -2298,7 +2880,7 @@
     $("btn-new-kit").addEventListener("click", () => openNewKit());
     $("btn-settings").addEventListener("click", () => openSettings());
     $("btn-export").addEventListener("click", () => {
-      download(`symus-study-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportData(), "application/json");
+      download(`studyforge-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportData(), "application/json");
       toast("Backup exported.", "success");
     });
     $("btn-import").addEventListener("click", () => $("import-file").click());
@@ -2333,7 +2915,7 @@
       const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
       applyTheme(next);
       try {
-        localStorage.setItem("symus.theme", next);
+        localStorage.setItem("studyforge.theme", next);
       } catch (error) {
         /* private mode */
       }
@@ -2351,7 +2933,7 @@
     collapseButton.addEventListener("click", () => {
       document.body.classList.toggle("nav-collapsed");
       try {
-        localStorage.setItem("symus.nav", document.body.classList.contains("nav-collapsed") ? "collapsed" : "open");
+        localStorage.setItem("studyforge.nav", document.body.classList.contains("nav-collapsed") ? "collapsed" : "open");
       } catch (error) {
         /* private mode */
       }
@@ -2373,11 +2955,11 @@
           if (finished.status === "done") {
             toast(
               finished.kind === "quiz"
-                ? "Practice questions ready."
+                ? "Quiz questions ready."
                 : finished.kind === "flashcards"
                   ? "Flashcards ready."
                   : finished.kind === "exam"
-                    ? "Practice exam ready."
+                    ? "Practice test ready."
                     : "Study document ready.",
               "success",
             );
@@ -2406,8 +2988,7 @@
       ) {
         if (event.key === " " || event.key === "Enter") {
           event.preventDefault();
-          flashState.flipped = !flashState.flipped;
-          render();
+          flipCard();
           return;
         }
         if (event.key === "ArrowRight") {
@@ -2446,7 +3027,7 @@
     renderJobBar();
   }
 
-  Symus.ui = {
+  StudyForge.ui = {
     init,
     render,
     toast,
@@ -2454,4 +3035,4 @@
     navigate,
     isEditingDoc: () => Boolean(editingDocId),
   };
-})((window.Symus = window.Symus || {}));
+})((window.StudyForge = window.StudyForge || {}));
