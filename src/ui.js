@@ -785,6 +785,19 @@
     }
 
     const quiz = kit.quiz;
+    // A run gets the page to itself: no regeneration controls while answering.
+    if (quiz && quizState.status === "running" && quizState.kitId === kit.id) {
+      return `
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Quiz</h2>
+              <p class="muted tiny">${esc(kit.name)} — answers lock as you mark them.</p>
+            </div>
+          </div>
+          ${renderKitQuiz(kit)}
+        </section>`;
+    }
     const sources = quiz && quiz.sourceNames && quiz.sourceNames.length ? quiz.sourceNames : withDocs.map((r) => r.name);
     const missing = withDocs.length - (quiz && quiz.sourceCount ? quiz.sourceCount : 0);
     const coverage = (quiz && quiz.coverage && quiz.coverage.length ? quiz.coverage : null) || [];
