@@ -231,6 +231,84 @@
   .tab.active{color:var(--text);border-bottom-color:var(--accent);background:var(--panel)}
   .tab .count{background:var(--panel-3)}
 
+  /* flashcards */
+  .deck{display:grid;gap:12px;margin-top:6px}
+  .deck-bar{display:flex;justify-content:space-between;gap:10px}
+  .deck-meter{height:4px;border-radius:99px;background:var(--panel-3);overflow:hidden}
+  .deck-meter > span{display:block;height:100%;background:var(--accent);transition:width .25s ease}
+  .flashcard{
+    display:grid;gap:10px;align-content:center;justify-items:center;text-align:center;
+    min-height:230px;padding:28px 22px;border-radius:16px;cursor:pointer;
+    background:linear-gradient(160deg,var(--panel-2),var(--panel));
+    border:1px solid var(--line-2);color:var(--text);font:inherit;
+  }
+  .flashcard:hover{border-color:var(--accent-dim)}
+  .flashcard.flipped{border-color:var(--accent-dim);background:linear-gradient(160deg,rgba(114,214,173,.09),var(--panel))}
+  .fc-side{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-2)}
+  .fc-text{font-size:1.15rem;line-height:1.55;max-width:56ch;overflow-wrap:anywhere}
+  .fc-hint{font-size:.72rem;color:var(--muted-2)}
+  .deck-tools{margin-top:2px}
+  .deck-list{margin:8px 0 0;padding-left:20px;display:grid;gap:14px;max-height:420px;overflow:auto}
+  .deck-list p{margin:0}
+  .center{justify-content:center}
+
+  /* timed exam */
+  .exam-brief{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}
+  .exam-brief > div{
+    display:grid;gap:2px;padding:14px;border-radius:12px;
+    background:var(--panel-2);border:1px solid var(--line);text-align:center;
+  }
+  .exam-figure{font-size:1.5rem;font-weight:650;font-variant-numeric:tabular-nums}
+  .exam-bar{
+    position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:14px;
+    flex-wrap:wrap;padding:12px 14px;margin:-4px 0 16px;border-radius:12px;
+    background:var(--panel-2);border:1px solid var(--line-2);
+  }
+  .exam-timer{display:flex;align-items:baseline;gap:8px}
+  .exam-clock{
+    font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.02em;
+    color:var(--text);
+  }
+  .exam-clock.warn{color:var(--danger);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .exam-questions{padding-left:0;list-style:none}
+  .q-number{
+    display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+    margin-right:8px;border-radius:6px;background:var(--panel-3);
+    font-size:.72rem;font-weight:700;color:var(--muted);vertical-align:middle;
+  }
+  .option.selected{border-color:var(--accent);background:rgba(114,214,173,.12);color:var(--text)}
+  .option.static{cursor:default}
+  .option.static:hover{background:transparent;border-color:var(--line-2)}
+  .option.static.correct:hover,.option.static.wrong:hover{background:rgba(114,214,173,.1)}
+  .result-card{
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:18px;
+    border-radius:14px;background:var(--panel-2);border:1px solid var(--line);
+  }
+  .result-score{font-size:2.4rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .result-score .muted{font-size:1.2rem;font-weight:500}
+  .result-percent{font-size:1.1rem;color:var(--accent)}
+  .result-meter{height:8px;border-radius:99px;background:var(--panel-3);overflow:hidden;margin:12px 0 4px}
+  .result-meter > span{display:block;height:100%;background:var(--accent)}
+  .review-head{margin:18px 0 10px;font-size:1rem}
+  .q-correct .q-text,.q-wrong .q-text{font-weight:600}
+  @media (max-width:640px){ .exam-brief{grid-template-columns:repeat(2,minmax(0,1fr))} }
+
+  /* quiz coverage */
+  .coverage{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .coverage-item{
+    display:inline-flex;align-items:center;gap:7px;max-width:100%;
+    padding:3px 4px 3px 10px;border-radius:99px;font-size:.78rem;
+    background:rgba(114,214,173,.1);border:1px solid rgba(114,214,173,.24);color:var(--accent);
+    overflow-wrap:anywhere;
+  }
+  .coverage-item > span{
+    min-width:20px;padding:0 6px;border-radius:99px;text-align:center;
+    background:rgba(114,214,173,.18);font-variant-numeric:tabular-nums;font-weight:700;
+  }
+  .coverage-item.empty{background:rgba(240,198,116,.1);border-color:rgba(240,198,116,.28);color:var(--warn)}
+  .coverage-item.empty > span{background:rgba(240,198,116,.16)}
+
   /* documents tab */
   .doc-layout{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start}
   .doc-side{padding:14px}
@@ -363,13 +441,13 @@
       done = true;
       console.warn("[Symus Study] " + reason + "; loading the project files directly.");
       [
-        "./src/store.js?v=2026-10-21b",
-        "./src/markdown.js?v=2026-10-21b",
-        "./src/ocr.js?v=2026-10-21b",
-        "./src/ai.js?v=2026-10-21b",
-        "./src/jobs.js?v=2026-10-21b",
-        "./src/ui.js?v=2026-10-21b",
-        "./src/main.js?v=2026-10-21b",
+        "./src/store.js?v=2026-10-22",
+        "./src/markdown.js?v=2026-10-22",
+        "./src/ocr.js?v=2026-10-22",
+        "./src/ai.js?v=2026-10-22",
+        "./src/jobs.js?v=2026-10-22",
+        "./src/ui.js?v=2026-10-22",
+        "./src/main.js?v=2026-10-22",
       ].forEach(function (src) {
         var script = document.createElement("script");
         script.src = src;

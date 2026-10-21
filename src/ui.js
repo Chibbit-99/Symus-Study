@@ -3,8 +3,12 @@
  *
  * Hash routes:
  *   #/                 dashboard (classes + study kits)
- *   #/kit/<id>         a study kit: add PDFs / pasted text, see resources
- *   #/resource/<id>    one resource: study document + practice questions
+ *   #/kit/<id>                   a study kit: add PDFs / pasted text, see resources
+ *   #/kit/<id>/documents        study documents
+ *   #/kit/<id>/questions        practice questions
+ *   #/kit/<id>/flashcards       flashcard deck
+ *   #/kit/<id>/exam             timed practice exam
+ *   #/resource/<id>             one resource: study document
  *
  * Rendering is a full rebuild of #view on store changes; user drafts in
  * textareas are captured and restored around it so typing is never lost.
@@ -16,6 +20,8 @@
   const md = Symus.md;
   const jobs = Symus.jobs;
   const esc = md.escapeHtml;
+
+  const KIT_TABS = ["resources", "documents", "questions", "flashcards", "exam"];
 
   const STATUS_LABEL = {
     queued: "Queued",
@@ -31,6 +37,10 @@
   let editingDocId = null;
   let docViewId = null;
   let quizState = { selected: {}, revealed: {} };
+  // Flashcard deck position, kept per kit while the tab is open.
+  let flashState = { kitId: null, index: 0, flipped: false, order: null, known: {}, again: {}, shuffled: false };
+  // Timed exam session. Lives in memory only: reloading the page abandons a run.
+  let examState = { kitId: null, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
   let renderQueued = false;
   let pendingReprocessId = null;
   let lastQuizKey = null;
@@ -88,13 +98,52 @@
     const hash = location.hash.replace(/^#\/?/, "");
     const parts = hash.split("/").filter(Boolean);
     if (parts[0] === "kit" && parts[1]) {
-      const tab = parts[2] === "documents" || parts[2] === "questions" ? parts[2] : "resources";
+      const tab = KIT_TABS.includes(parts[2]) ? parts[2] : "resources";
       route = { name: "kit", id: parts[1], tab };
     } else if (parts[0] === "resource" && parts[1]) {
       route = { name: "resource", id: parts[1] };
     } else {
       route = { name: "dashboard", id: null };
     }
+  }
+
+  function resetDeck(kitId) {
+    flashState = {
+      kitId,
+      index: 0,
+      flipped: false,
+      order: null,
+      known: {},
+      again: {},
+      shuffled: false,
+      showList: false,
+    };
+  }
+
+  function resetExam(kitId) {
+    examState = { kitId, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
+  }
+
+  /** Deck order: natural, or a stable shuffle stored in flashState.order. */
+  function deckOrder(kit) {
+    const total = kit.flashcards ? kit.flashcards.items.length : 0;
+    if (!total) return [];
+    if (!flashState.order || flashState.order.length !== total) {
+      flashState.order = Array.from({ length: total }, (_, index) => index);
+    }
+    return flashState.order;
+  }
+
+  function formatClock(seconds) {
+    const safe = Math.max(0, Math.ceil(seconds));
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+  }
+
+  function examSecondsLeft() {
+    if (examState.status !== "running") return 0;
+    return Math.max(0, Math.ceil((examState.endsAt - Date.now()) / 1000));
   }
 
   function requireKey() {
@@ -154,6 +203,8 @@
         lastQuizKey = route.id;
         quizState = { selected: {}, revealed: {} };
         docViewId = null;
+        resetDeck(route.id);
+        if (examState.kitId !== route.id) resetExam(route.id);
       }
       els.view.appendChild(
         kit ? renderKit(kit, route.tab) : renderMissing("That study kit no longer exists."),
@@ -312,6 +363,8 @@
         ${kit.subject ? `<p class="muted small subject">${esc(kit.subject)}</p>` : ""}
         <p class="muted small">${plural(resources.length, "resource")} · ${ready} ready${
           kit.quiz ? ` · ${plural(kit.quiz.items.length, "question")}` : ""
+        }${kit.flashcards ? ` · ${plural(kit.flashcards.items.length, "card")}` : ""}${
+          kit.exam ? ` · ${plural(kit.exam.items.length, "exam question")}` : ""
         }<br>updated ${esc(relativeTime(kit.updatedAt))}</p>
         <footer class="card-foot">
           <a class="btn small primary" href="#/kit/${esc(kit.id)}">Open</a>
@@ -334,6 +387,18 @@
         label: "Practice questions",
         count: kit.quiz ? kit.quiz.items.length : 0,
         href: `#/kit/${kit.id}/questions`,
+      },
+      {
+        id: "flashcards",
+        label: "Flashcards",
+        count: kit.flashcards ? kit.flashcards.items.length : 0,
+        href: `#/kit/${kit.id}/flashcards`,
+      },
+      {
+        id: "exam",
+        label: "Practice exam",
+        count: kit.exam ? kit.exam.items.length : 0,
+        href: `#/kit/${kit.id}/exam`,
       },
     ];
     return `<nav class="tabs" role="tablist" aria-label="Study kit sections">${tabs
@@ -369,7 +434,11 @@
           ? renderKitDocuments(kit, resources)
           : tab === "questions"
             ? renderKitQuestions(kit, resources)
-            : renderKitResources(kit, resources)
+            : tab === "flashcards"
+              ? renderKitFlashcards(kit, resources)
+              : tab === "exam"
+                ? renderKitExam(kit, resources)
+                : renderKitResources(kit, resources)
       }`;
     return page;
   }
@@ -480,6 +549,8 @@
     const quiz = kit.quiz;
     const sources = quiz && quiz.sourceNames && quiz.sourceNames.length ? quiz.sourceNames : withDocs.map((r) => r.name);
     const missing = withDocs.length - (quiz && quiz.sourceCount ? quiz.sourceCount : 0);
+    const coverage = (quiz && quiz.coverage && quiz.coverage.length ? quiz.coverage : null) || [];
+    const uncovered = coverage.filter((entry) => entry.produced === 0);
 
     return `
       <section class="panel">
@@ -501,7 +572,33 @@
             }
           </div>
         </div>
+        ${
+          quiz && coverage.length
+            ? `<div class="coverage" aria-label="Questions per resource">${coverage
+                .map(
+                  (entry) =>
+                    `<span class="coverage-item ${entry.produced ? "ok" : "empty"}" title="${esc(
+                      entry.produced
+                        ? `${entry.produced} of ${entry.requested} requested question(s)`
+                        : "No questions were produced for this resource",
+                    )}">${esc(entry.name)}<span>${entry.produced}</span></span>`,
+                )
+                .join("")}</div>`
+            : ""
+        }
         ${quiz && missing > 0 ? `<div class="notice subtle">${plural(missing, "newer document")} not covered yet — regenerate to include them.</div>` : ""}
+        ${
+          quiz && uncovered.length
+            ? `<div class="notice subtle">No questions for ${esc(uncovered.map((entry) => entry.name).join(", "))} — regenerate, or check that its document has enough content to question.</div>`
+            : ""
+        }
+        ${
+          quiz && quiz.failures && quiz.failures.length
+            ? `<div class="notice error-soft"><strong>Some resources failed.</strong> ${esc(
+                quiz.failures.map((failure) => `${failure.name}: ${failure.message}`).join(" · "),
+              )}</div>`
+            : ""
+        }
         ${quiz && quiz.truncated ? `<div class="notice subtle">The combined documents were long, so a proportional slice of each resource was used.</div>` : ""}
         ${renderKitQuiz(kit)}
       </section>`;
@@ -567,6 +664,292 @@
       </ol>`;
   }
 
+  /* ----------------------------- flashcards ------------------------ */
+
+  function coverageChips(coverage) {
+    if (!coverage || !coverage.length) return "";
+    return `<div class="coverage" aria-label="Cards or questions per resource">${coverage
+      .map(
+        (entry) =>
+          `<span class="coverage-item ${entry.produced ? "ok" : "empty"}" title="${esc(
+            entry.produced
+              ? `${entry.produced} of ${entry.requested} requested`
+              : "Nothing was produced for this resource",
+          )}">${esc(entry.name)}<span>${entry.produced}</span></span>`,
+      )
+      .join("")}</div>`;
+  }
+
+  function sourceFailures(set) {
+    return set && set.failures && set.failures.length
+      ? `<div class="notice error-soft"><strong>Some resources failed.</strong> ${esc(
+          set.failures.map((failure) => `${failure.name}: ${failure.message}`).join(" · "),
+        )}</div>`
+      : "";
+  }
+
+  function renderKitFlashcards(kit, resources) {
+    const withDocs = resources.filter((resource) => resource.document);
+    const cards = kit.flashcards;
+
+    return `
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Flashcards</h2>
+            <p class="muted tiny">Revision cards drawn from all ${plural(withDocs.length, "study document")} in this kit.</p>
+          </div>
+          <div class="row tight">
+            <button class="btn small ${cards ? "" : "primary"}" data-action="make-flashcards" data-id="${esc(kit.id)}">${
+              cards ? "Regenerate" : "Generate flashcards"
+            }</button>
+            ${
+              cards
+                ? `<button class="btn small" data-action="download-flashcards" data-id="${esc(kit.id)}">Download .md</button>`
+                : ""
+            }
+          </div>
+        </div>
+        ${
+          !withDocs.length
+            ? `<div class="notice subtle">Process at least one resource first — cards are written from the study documents in this kit.</div>`
+            : ""
+        }
+        ${cards ? coverageChips(cards.coverage) : ""}
+        ${cards ? sourceFailures(cards) : ""}
+        ${cards ? renderDeck(kit) : renderDeckEmpty(withDocs.length)}
+      </section>`;
+  }
+
+  function renderDeckEmpty(documentCount) {
+    if (!documentCount) return "";
+    return `<p class="muted small">No flashcards yet. Generate a deck and it will be saved with this study kit.</p>`;
+  }
+
+  function renderDeck(kit) {
+    const items = kit.flashcards.items;
+    const order = deckOrder(kit);
+    const position = Math.min(flashState.index, order.length - 1);
+    const card = items[order[position]];
+    if (!card) return "";
+
+    const knownCount = Object.keys(flashState.known).length;
+    const againCount = Object.keys(flashState.again).length;
+    const percent = Math.round((position / order.length) * 100);
+
+    return `
+      <div class="deck">
+        <div class="deck-bar">
+          <span class="muted tiny">Card ${position + 1} of ${order.length}${
+            flashState.shuffled ? " · shuffled" : ""
+          }</span>
+          <span class="muted tiny">${knownCount} known${againCount ? ` · ${againCount} to review` : ""}</span>
+        </div>
+        <div class="deck-meter"><span style="width:${percent}%"></span></div>
+        <button class="flashcard ${flashState.flipped ? "flipped" : ""}" data-action="flip-card" aria-label="Flashcard">
+          <span class="fc-side">${flashState.flipped ? "Answer" : "Prompt"}</span>
+          <span class="fc-text">${esc(flashState.flipped ? card.back : card.front)}</span>
+          <span class="fc-hint">${
+            flashState.flipped ? "Click to see the prompt again" : "Click or press Space to reveal"
+          }</span>
+        </button>
+        ${card.source ? `<p class="muted tiny center">From ${esc(card.source)}</p>` : ""}
+        <div class="row center">
+          <button class="btn small" data-action="prev-card" ${position === 0 ? "disabled" : ""}>Previous</button>
+          <button class="btn small primary" data-action="flip-card">${
+            flashState.flipped ? "Show prompt" : "Show answer"
+          }</button>
+          <button class="btn small" data-action="next-card" ${
+            position >= order.length - 1 ? "disabled" : ""
+          }>Next</button>
+        </div>
+        <div class="row center tight">
+          <button class="btn small ghost" data-action="card-again">Still learning</button>
+          <button class="btn small ghost" data-action="card-known">Got it</button>
+        </div>
+        <div class="row center tight deck-tools">
+          <button class="btn small ghost" data-action="shuffle-cards">Shuffle</button>
+          <button class="btn small ghost" data-action="restart-cards">Restart</button>
+          <button class="btn small ghost" data-action="deck-list">${
+            flashState.showList ? "Back to card" : "Browse all"
+          }</button>
+        </div>
+        ${flashState.showList ? renderDeckList(items) : ""}
+      </div>`;
+  }
+
+  function renderDeckList(items) {
+    return `<ol class="deck-list">${items
+      .map((card) => `<li><p><strong>${esc(card.front)}</strong></p><p class="muted small">${esc(card.back)}</p></li>`)
+      .join("")}</ol>`;
+  }
+
+  /* --------------------------- practice exam ----------------------- */
+
+  function renderKitExam(kit, resources) {
+    const withDocs = resources.filter((resource) => resource.document);
+    const exam = kit.exam;
+
+    if (!exam) {
+      return `
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Practice exam</h2>
+              <p class="muted tiny">A timed, multiple-choice paper written from all ${plural(
+                withDocs.length,
+                "study document",
+              )} in this kit.</p>
+            </div>
+            <button class="btn small primary" data-action="make-exam" data-id="${esc(kit.id)}">Build exam</button>
+          </div>
+          ${
+            withDocs.length
+              ? `<p class="muted small">No exam yet. Build one, then start the clock — questions are marked automatically when you submit or when time runs out.</p>`
+              : `<div class="notice subtle">Process at least one resource first — the exam is written from the study documents in this kit.</div>`
+          }
+        </section>`;
+    }
+
+    if (examState.status === "running") return renderExamRunning(kit);
+    if (examState.status === "finished") return renderExamResult(kit);
+
+    return renderExamIntro(kit);
+  }
+
+  function renderExamIntro(kit) {
+    const exam = kit.exam;
+    const attempt = exam.lastAttempt;
+    return `
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Practice exam</h2>
+            <p class="muted tiny">Written from all ${plural(exam.sourceCount || exam.sourceNames.length, "study document")} in this kit.</p>
+          </div>
+          <div class="row tight">
+            <button class="btn small primary" data-action="start-exam" data-id="${esc(kit.id)}">Start exam</button>
+            <button class="btn small" data-action="make-exam" data-id="${esc(kit.id)}">New exam</button>
+          </div>
+        </div>
+        ${coverageChips(exam.coverage)}
+        ${sourceFailures(exam)}
+        <div class="exam-brief">
+          <div><span class="exam-figure">${exam.items.length}</span><span class="muted tiny">questions</span></div>
+          <div><span class="exam-figure">${exam.durationMinutes}</span><span class="muted tiny">minutes</span></div>
+          <div><span class="exam-figure">${Math.round((exam.durationMinutes * 60) / exam.items.length)}</span><span class="muted tiny">seconds / question</span></div>
+          <div><span class="exam-figure">${attempt ? `${attempt.correct}/${attempt.total}` : "—"}</span><span class="muted tiny">last score</span></div>
+        </div>
+        <div class="notice subtle">
+          The clock keeps running if you leave this tab, and the exam submits itself when time is up.
+          Only multiple-choice questions are used so the paper can be marked automatically.
+        </div>
+      </section>`;
+  }
+
+  function renderExamRunning(kit) {
+    const exam = kit.exam;
+    const answers = examState.answers;
+    const answered = Object.keys(answers).length;
+    const left = examSecondsLeft();
+
+    return `
+      <section class="panel">
+        <div class="exam-bar">
+          <div class="exam-timer">
+            <span id="exam-clock" class="exam-clock ${left <= 60 ? "warn" : ""}">${formatClock(left)}</span>
+            <span class="muted tiny">remaining</span>
+          </div>
+          <span class="muted tiny" id="exam-answered">${answered}/${exam.items.length} answered</span>
+          <button class="btn small primary" data-action="submit-exam">Submit exam</button>
+        </div>
+        <ol class="quiz exam-questions">
+          ${exam.items
+            .map(
+              (item, index) => `
+            <li class="q">
+              <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+              <div class="options">
+                ${item.options
+                  .map(
+                    (option, optionIndex) => `<button class="option ${
+                      answers[index] === optionIndex ? "selected" : ""
+                    }" data-action="exam-answer" data-q="${index}" data-opt="${optionIndex}">
+                      <span class="opt-letter">${String.fromCharCode(65 + optionIndex)}</span>
+                      <span>${esc(option)}</span>
+                    </button>`,
+                  )
+                  .join("")}
+              </div>
+            </li>`,
+            )
+            .join("")}
+        </ol>
+        <div class="row center">
+          <button class="btn primary" data-action="submit-exam">Submit exam</button>
+        </div>
+      </section>`;
+  }
+
+  function renderExamResult(kit) {
+    const exam = kit.exam;
+    const result = examState.result || { correct: 0, total: exam.items.length, secondsUsed: 0 };
+    const percent = result.total ? Math.round((result.correct / result.total) * 100) : 0;
+    const grade =
+      percent >= 85 ? "Excellent" : percent >= 70 ? "Solid pass" : percent >= 50 ? "Getting there" : "Needs work";
+
+    return `
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Exam result</h2>
+            <p class="muted tiny">${result.timedOut ? "Time ran out — the paper was submitted automatically." : "Submitted."}</p>
+          </div>
+          <div class="row tight">
+            <button class="btn small" data-action="retake-exam">Retake</button>
+            <button class="btn small" data-action="make-exam" data-id="${esc(kit.id)}">New exam</button>
+          </div>
+        </div>
+        <div class="result-card">
+          <span class="result-score">${result.correct}<span class="muted">/${result.total}</span></span>
+          <span class="result-percent">${percent}%</span>
+          <span class="badge ${percent >= 70 ? "ready" : "error"}">${esc(grade)}</span>
+          <span class="muted tiny">in ${formatClock(result.secondsUsed)} of ${exam.durationMinutes}:00</span>
+        </div>
+        <div class="result-meter"><span style="width:${percent}%"></span></div>
+        <h3 class="review-head">Review</h3>
+        <ol class="quiz">
+          ${exam.items
+            .map((item, index) => {
+              const chosen = examState.answers[index];
+              const correct = chosen === item.answerIndex;
+              return `
+              <li class="q ${correct ? "q-correct" : "q-wrong"}">
+                <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+                <div class="options">
+                  ${item.options
+                    .map((option, optionIndex) => {
+                      let cls = "option static";
+                      if (optionIndex === item.answerIndex) cls += " correct";
+                      else if (optionIndex === chosen) cls += " wrong";
+                      return `<span class="${cls}">
+                        <span class="opt-letter">${String.fromCharCode(65 + optionIndex)}</span>
+                        <span>${esc(option)}</span>
+                      </span>`;
+                    })
+                    .join("")}
+                </div>
+                <p class="muted tiny">${
+                  chosen === undefined ? "Not answered." : correct ? "Correct." : "Incorrect — see the highlighted answer."
+                }</p>
+                ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}
+              </li>`;
+            })
+            .join("")}
+        </ol>
+      </section>`;
+  }
+
   function renderResourceRow(resource) {
     const pages = resource.pages || {};
     const meta = [];
@@ -614,6 +997,8 @@
         </div>
         <div class="row">
           <a class="btn" href="#/kit/${esc(resource.kitId)}/questions">Practice questions</a>
+          <a class="btn" href="#/kit/${esc(resource.kitId)}/flashcards">Flashcards</a>
+          <a class="btn" href="#/kit/${esc(resource.kitId)}/exam">Practice exam</a>
           ${resource.type === "pdf" && !processing ? `<button class="btn" data-action="rerun-resource" data-id="${esc(resource.id)}">Re-run extraction</button>` : ""}
           <button class="btn danger" data-action="delete-resource" data-id="${esc(resource.id)}">Delete</button>
         </div>
@@ -1098,6 +1483,222 @@
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * Flashcard deck actions
+   * ------------------------------------------------------------------ */
+
+  function moveCard(step) {
+    const kit = store.getKit(route.id);
+    if (!kit) return;
+    const order = deckOrder(kit);
+    if (!order.length) return;
+    const next = Math.min(order.length - 1, Math.max(0, flashState.index + step));
+    flashState.index = next;
+    flashState.flipped = false;
+    render();
+  }
+
+  function markCard(kind) {
+    const kit = store.getKit(route.id);
+    if (!kit) return;
+    const order = deckOrder(kit);
+    if (!order.length) return;
+    const cardIndex = order[flashState.index];
+    if (kind === "known") {
+      flashState.known[cardIndex] = true;
+      delete flashState.again[cardIndex];
+    } else {
+      flashState.again[cardIndex] = true;
+      delete flashState.known[cardIndex];
+    }
+    if (flashState.index < order.length - 1) {
+      flashState.index += 1;
+      flashState.flipped = false;
+      render();
+    } else {
+      flashState.flipped = false;
+      render();
+      toast("Last card in the deck.", "info");
+    }
+  }
+
+  function shuffleDeck() {
+    const kit = store.getKit(route.id);
+    if (!kit) return;
+    const order = deckOrder(kit).slice();
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    flashState.order = order;
+    flashState.index = 0;
+    flashState.flipped = false;
+    flashState.shuffled = true;
+    render();
+    toast("Deck shuffled.", "success");
+  }
+
+  function flashcardsToMarkdown(kit) {
+    const set = kit.flashcards;
+    const lines = [`# ${kit.name} — flashcards`, ""];
+    if (set.sourceNames && set.sourceNames.length) lines.push(`Sources: ${set.sourceNames.join(", ")}`, "");
+    set.items.forEach((card, index) => {
+      lines.push(`**${index + 1}. ${card.front}**`, "", card.back, "");
+    });
+    return lines.join("\n");
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Timed exam
+   * ------------------------------------------------------------------ */
+
+  function startExam(kit) {
+    if (!kit.exam || !kit.exam.items.length) {
+      toast("Build an exam first.", "error");
+      return;
+    }
+    examState = {
+      kitId: kit.id,
+      status: "running",
+      answers: {},
+      startedAt: Date.now(),
+      endsAt: Date.now() + kit.exam.durationMinutes * 60 * 1000,
+      secondsUsed: 0,
+      result: null,
+    };
+    render();
+    toast(`Exam started — ${kit.exam.durationMinutes} minutes on the clock.`);
+  }
+
+  function submitExam(reason = "manual") {
+    if (examState.status !== "running") return;
+    const kit = store.getKit(examState.kitId);
+    if (!kit || !kit.exam) {
+      resetExam(examState.kitId);
+      render();
+      return;
+    }
+
+    const items = kit.exam.items;
+    let correct = 0;
+    items.forEach((item, index) => {
+      if (examState.answers[index] === item.answerIndex) correct += 1;
+    });
+
+    const limit = kit.exam.durationMinutes * 60;
+    const secondsUsed = Math.min(limit, Math.max(0, Math.round((Date.now() - examState.startedAt) / 1000)));
+
+    examState.status = "finished";
+    examState.secondsUsed = secondsUsed;
+    examState.result = { correct, total: items.length, secondsUsed, timedOut: reason === "timeout" };
+
+    store.setKitExamAttempt(kit.id, {
+      correct,
+      total: items.length,
+      takenAt: new Date().toISOString(),
+      secondsUsed,
+    });
+
+    render();
+    toast(
+      reason === "timeout"
+        ? `Time is up — scored ${correct}/${items.length}.`
+        : `Exam submitted — ${correct}/${items.length}.`,
+      correct / Math.max(1, items.length) >= 0.5 ? "success" : "info",
+    );
+  }
+
+  /** One ticker for the whole page: updates the clock and enforces the limit. */
+  function startExamTicker() {
+    setInterval(() => {
+      if (examState.status !== "running") return;
+      const left = examSecondsLeft();
+      const clock = document.getElementById("exam-clock");
+      if (clock) {
+        clock.textContent = formatClock(left);
+        clock.classList.toggle("warn", left <= 60);
+      }
+      if (left <= 0) submitExam("timeout");
+    }, 1000);
+  }
+
+  function openFlashcardOptions(kitId) {
+    const kit = store.getKit(kitId);
+    if (!kit) return;
+    const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
+
+    openModal({
+      title: "Generate flashcards",
+      confirmLabel: "Generate",
+      body: `
+        <div class="notice subtle">
+          Cards are written from <strong>all ${plural(withDocs.length, "study document")}</strong> in
+          “${esc(kit.name)}”. Each resource is asked for its own share, so the deck covers the whole kit.
+        </div>
+        <div class="field"><label for="cards-count">How many cards</label>
+          <select id="cards-count">
+            ${[10, 20, 30, 40].map((n) => `<option value="${n}" ${n === 20 ? "selected" : ""}>${n}</option>`).join("")}
+          </select>
+        </div>`,
+      onConfirm: (root) => {
+        if (!withDocs.length) {
+          toast("Add a resource with a study document first.", "error");
+          return false;
+        }
+        if (!requireKey()) return false;
+        const count = Number(root.querySelector("#cards-count").value);
+        resetDeck(kit.id);
+        jobs.makeFlashcards(kit, count);
+        toast("Generating flashcards…");
+      },
+    });
+  }
+
+  function openExamOptions(kitId) {
+    const kit = store.getKit(kitId);
+    if (!kit) return;
+    const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
+
+    openModal({
+      title: "Build a practice exam",
+      confirmLabel: "Build exam",
+      body: `
+        <div class="notice subtle">
+          A timed, multiple-choice paper from <strong>all ${plural(withDocs.length, "study document")}</strong> in
+          “${esc(kit.name)}”. Questions are marked automatically, so short answers are not used.
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="exam-count">Questions</label>
+            <select id="exam-count">
+              ${[10, 15, 20, 25, 30]
+                .map((n) => `<option value="${n}" ${n === 20 ? "selected" : ""}>${n}</option>`)
+                .join("")}
+            </select>
+          </div>
+          <div class="field"><label for="exam-time">Time limit</label>
+            <select id="exam-time">
+              <option value="">Auto (about 1¼ min per question)</option>
+              ${[10, 15, 20, 30, 45, 60, 90]
+                .map((n) => `<option value="${n}">${n} minutes</option>`)
+                .join("")}
+            </select>
+          </div>
+        </div>`,
+      onConfirm: (root) => {
+        if (!withDocs.length) {
+          toast("Add a resource with a study document first.", "error");
+          return false;
+        }
+        if (!requireKey()) return false;
+        const count = Number(root.querySelector("#exam-count").value);
+        const minutes = Number(root.querySelector("#exam-time").value) || null;
+        resetExam(kit.id);
+        jobs.makeExam(kit, count, minutes);
+        toast("Building the exam…");
+      },
+    });
+  }
+
   function openQuizOptions(kitId) {
     const kit = store.getKit(kitId);
     if (!kit) return;
@@ -1108,8 +1709,9 @@
       confirmLabel: "Generate",
       body: `
         <div class="notice subtle">
-          Questions are written from <strong>all ${plural(withDocs.length, "study document")}</strong> in
-          “${esc(kit.name)}”, so they cover the whole kit rather than one resource.
+          Questions are spread across <strong>all ${plural(withDocs.length, "study document")}</strong> in
+          “${esc(kit.name)}”. Each resource is asked for its own share, so every one of them is covered
+          rather than the model focusing on a single document.
         </div>
         <div class="field-row">
           <div class="field"><label for="quiz-count">How many questions</label>
@@ -1365,6 +1967,100 @@
         if (kit) openQuizOptions(kit.id);
         break;
       }
+      case "make-flashcards": {
+        const kit = store.getKit(id);
+        if (kit) openFlashcardOptions(kit.id);
+        break;
+      }
+      case "download-flashcards": {
+        const kit = store.getKit(id);
+        if (kit && kit.flashcards) {
+          download(
+            safeFileName(kit.name + " flashcards", "md"),
+            flashcardsToMarkdown(kit),
+            "text/markdown;charset=utf-8",
+          );
+        }
+        break;
+      }
+      case "flip-card": {
+        flashState.flipped = !flashState.flipped;
+        render();
+        break;
+      }
+      case "next-card":
+        moveCard(1);
+        break;
+      case "prev-card":
+        moveCard(-1);
+        break;
+      case "card-known":
+        markCard("known");
+        break;
+      case "card-again":
+        markCard("again");
+        break;
+      case "shuffle-cards":
+        shuffleDeck();
+        break;
+      case "restart-cards": {
+        const kit = store.getKit(route.id);
+        if (kit) {
+          resetDeck(kit.id);
+          render();
+        }
+        break;
+      }
+      case "deck-list":
+        flashState.showList = !flashState.showList;
+        render();
+        break;
+      case "make-exam": {
+        const kit = store.getKit(id);
+        if (kit) openExamOptions(kit.id);
+        break;
+      }
+      case "start-exam": {
+        const kit = store.getKit(route.id);
+        if (kit) startExam(kit);
+        break;
+      }
+      case "retake-exam": {
+        const kit = store.getKit(route.id);
+        if (!kit || !kit.exam) break;
+        openModal({
+          title: "Retake this exam?",
+          body: `<p>The same ${plural(kit.exam.items.length, "question")} with a fresh ${kit.exam.durationMinutes}-minute clock. Your previous score is replaced.</p>`,
+          confirmLabel: "Start again",
+          onConfirm: () => {
+            resetExam(kit.id);
+            startExam(kit);
+          },
+        });
+        break;
+      }
+      case "exam-answer": {
+        if (examState.status !== "running") break;
+        examState.answers[Number(actionEl.dataset.q)] = Number(actionEl.dataset.opt);
+        render();
+        break;
+      }
+      case "submit-exam": {
+        if (examState.status !== "running") break;
+        const kit = store.getKit(examState.kitId);
+        const unanswered = kit ? kit.exam.items.length - Object.keys(examState.answers).length : 0;
+        if (unanswered > 0) {
+          openModal({
+            title: "Submit the exam?",
+            body: `<p>${plural(unanswered, "question")} still unanswered. Unanswered questions are marked incorrect.</p>`,
+            confirmLabel: "Submit",
+            onConfirm: () => submitExam("manual"),
+          });
+        } else {
+          submitExam("manual");
+        }
+        break;
+      }
       case "download-quiz": {
         const kit = store.getKit(id);
         if (kit && kit.quiz) {
@@ -1494,7 +2190,13 @@
         if (finished) {
           if (finished.status === "done") {
             toast(
-              finished.kind === "quiz" ? "Practice questions ready." : "Study document ready.",
+              finished.kind === "quiz"
+                ? "Practice questions ready."
+                : finished.kind === "flashcards"
+                  ? "Flashcards ready."
+                  : finished.kind === "exam"
+                    ? "Practice exam ready."
+                    : "Study document ready.",
               "success",
             );
           } else if (finished.status === "error") {
@@ -1509,6 +2211,34 @@
     });
 
     document.addEventListener("keydown", (event) => {
+      // Flashcard deck: Space flips, arrows walk the deck — unless the user is
+      // typing somewhere or a dialog is open.
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+      if (
+        route.name === "kit" &&
+        route.tab === "flashcards" &&
+        !typing &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        els.modalRoot.hidden
+      ) {
+        if (event.key === " " || event.key === "Enter") {
+          event.preventDefault();
+          flashState.flipped = !flashState.flipped;
+          render();
+          return;
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          moveCard(1);
+          return;
+        }
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          moveCard(-1);
+          return;
+        }
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         els.search.focus();
@@ -1526,6 +2256,8 @@
         if (confirm) confirm.click();
       }
     });
+
+    startExamTicker();
 
     store.load();
     render();
