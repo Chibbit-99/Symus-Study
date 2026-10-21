@@ -516,7 +516,7 @@
   .attempt-list{display:grid;gap:6px;list-style:none;margin:0;padding:0}
   .attempt-row{
     display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:11px;
-    border:1px solid var(--line);background:var(--panel-2);
+    border:1px solid var(--line);background:var(--panel-2);flex-wrap:wrap;
   }
   .attempt-score{
     width:48px;height:34px;flex:0 0 auto;display:grid;place-items:center;border-radius:9px;
@@ -604,6 +604,7 @@
   .fc-back .fc-side{color:rgba(255,255,255,.85)}
   .fc-text{
     font-size:1.25rem;line-height:1.5;max-width:52ch;overflow-wrap:anywhere;font-weight:600;letter-spacing:-.015em;
+    max-height:100%;overflow:auto;padding-right:2px;scrollbar-width:thin;
   }
   .fc-back .fc-text{font-weight:520;font-size:1.12rem}
   .fc-hint{font-size:.72rem;color:var(--muted-2)}
@@ -723,7 +724,10 @@
   .modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px 0}
   .modal-head h2{font-size:1.02rem}
   .modal-body{padding:14px 22px 6px}
-  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:15px 22px;border-top:1px solid var(--line);background:var(--panel-2);border-radius:0 0 18px 18px}
+  .modal-foot{
+    display:flex;justify-content:flex-end;gap:8px;padding:15px 22px;border-top:1px solid var(--line);
+    background:var(--panel-2);border-radius:0 0 18px 18px;position:sticky;bottom:0;
+  }
 
   /* collapsed sidebar ---------------------------------------------- */
   body.nav-collapsed{--sidebar-w:78px}
