@@ -26,7 +26,12 @@
 const NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
 const NIM_MODELS_ENDPOINT = "https://integrate.api.nvidia.com/v1/models";
 
-const DEFAULT_ALLOWED_ORIGINS = ["https://chibbit-99.github.io"];
+// Origins allowed to call the Worker. The project site and the personal
+// GitHub Pages fork site (StudyForge) both serve the app.
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://chibbit-99.github.io",
+  "https://darrelx4739.github.io",
+];
 
 // Model families this app offers. Keep in sync with MODEL_FILTER in src/ai.js,
 // which filters defensively on the client too.

@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 # Comma-separated allowed browser origins. localhost / 127.0.0.1 / [::1] on any
 # port is always allowed so the app can be run with `python3 -m http.server`.
 [vars]
-SYMUS_ORIGIN = "https://chibbit-99.github.io"
+SYMUS_ORIGIN = "https://chibbit-99.github.io,https://darrelx4739.github.io"
 # Model families offered in the app's model selector (substring match).
 SYMUS_MODEL_FILTER = "deepseek,step,nemotron,mistral,gemma,glm,muse"
 # Optional extra ids allowed even if they match no filter substring.
