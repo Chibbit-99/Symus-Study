@@ -4,7 +4,7 @@
  * One job runs at a time, in a queue:
  *
  *   PDF   read text layer -> AI gap check -> OCR flagged pages
- *         -> AI study document -> save document to localStorage
+ *         -> AI study document (streamed live) -> save to localStorage
  *   text  AI study document -> save document to localStorage
  *   quiz / flashcards / exam
  *         AI study material from every saved document in a study kit,
@@ -19,6 +19,11 @@
   const listeners = new Set();
   const queue = [];
   const sessionFiles = new Map(); // resourceId -> File, for re-runs in this tab
+  // Live study-document drafts, keyed by resource id, while the model streams.
+  // Kept in memory only: the finished document is what gets persisted.
+  const drafts = new Map();
+  const DRAFT_EMIT_MS = 120;
+  let lastDraftEmit = 0;
   let current = null;
   let lastJob = null;
   let counter = 0;
@@ -47,6 +52,27 @@
   const getQueue = () => queue.slice();
   const isBusy = () => Boolean(current);
   const getSessionFile = (resourceId) => sessionFiles.get(resourceId) || null;
+
+  const getDraft = (resourceId) => drafts.get(resourceId) || null;
+
+  /**
+   * Store the markdown written so far and notify listeners, at most a few times
+   * a second so a long document cannot flood the UI.
+   */
+  function publishDraft(job, draft) {
+    if (!job || !job.resourceId) return;
+    drafts.set(job.resourceId, {
+      markdown: draft.markdown,
+      part: draft.part || 1,
+      total: draft.total || 1,
+      updatedAt: Date.now(),
+    });
+    job.draftChars = draft.markdown.length;
+    const now = Date.now();
+    if (now - lastDraftEmit < DRAFT_EMIT_MS) return;
+    lastDraftEmit = now;
+    emit();
+  }
 
   function enqueue(job) {
     const item = {
@@ -120,6 +146,7 @@
       }
     } finally {
       const finished = current;
+      if (finished && finished.resourceId) drafts.delete(finished.resourceId);
       lastJob = finished;
       current = null;
       emit();
@@ -290,6 +317,7 @@
         },
         signal: job.controller.signal,
         onProgress: ({ message }) => progress(job, { step: message, progress: 80 }),
+        onDraft: (draft) => publishDraft(job, draft),
       });
 
       let statusMessage = `Document ready — ${total} page(s), ${ocrText.size} OCR'd.`;
@@ -349,6 +377,7 @@
           progress: total > 1 ? 10 + (part / total) * 85 : 50,
         });
       },
+      onDraft: (draft) => publishDraft(job, draft),
     });
 
     let statusMessage = "Document ready.";
@@ -703,5 +732,6 @@
     getQueue,
     isBusy,
     getSessionFile,
+    getDraft,
   };
 })((window.Symus = window.Symus || {}));

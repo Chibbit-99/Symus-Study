@@ -10,6 +10,9 @@
  *                       their account; nothing is stored or logged here.
  *   POST /api/notes   - forwards a chat request to NVIDIA NIM. The caller
  *                       supplies their own API key in the Authorization header.
+ *                       Pass {"stream": true} in the body to receive the
+ *                       upstream server-sent events (SSE) as they arrive, so
+ *                       the app can show a study document being written.
  *
  * Configuration (wrangler.toml [vars] or the dashboard):
  *   SYMUS_ORIGIN        - comma-separated allowed browser origins.
@@ -148,10 +151,20 @@ function prepareUpstreamBody(raw, filter, extraModels) {
     return { error: `Request text cannot exceed ${MAX_MESSAGE_CHARS} characters in total.` };
   }
 
+  // Streaming is opt-in. The response is piped straight through, so the client
+  // sees the model's Server-Sent Events as they arrive.
+  let stream = false;
+  if (data.stream !== undefined) {
+    if (typeof data.stream !== "boolean") {
+      return { error: "stream must be a boolean." };
+    }
+    stream = data.stream;
+  }
+
   const body = {
     model: data.model,
     messages,
-    stream: false,
+    stream,
   };
 
   if (data.max_tokens !== undefined) {
@@ -183,7 +196,7 @@ function prepareUpstreamBody(raw, filter, extraModels) {
     body.chat_template_kwargs = { enable_thinking: kwargs.enable_thinking };
   }
 
-  return { body: JSON.stringify(body) };
+  return { body: JSON.stringify(body), stream };
 }
 
 export default {
@@ -325,10 +338,20 @@ export default {
         headers: {
           Authorization: authorization,
           "Content-Type": "application/json",
-          Accept: "application/json",
+          Accept: prepared.stream ? "text/event-stream" : "application/json",
         },
         body: prepared.body,
       });
+
+      // Streaming: hand the SSE body straight back. Content-Type is pinned (and
+      // any buffering hint set) so no intermediary holds the events back.
+      if (prepared.stream && upstream.ok && upstream.body) {
+        const streamHeaders = new Headers(cors);
+        streamHeaders.set("Content-Type", "text/event-stream; charset=utf-8");
+        streamHeaders.set("Cache-Control", "no-store, no-transform");
+        streamHeaders.set("X-Accel-Buffering", "no");
+        return new Response(upstream.body, { status: 200, headers: streamHeaders });
+      }
 
       const responseHeaders = new Headers(cors);
       responseHeaders.set("Content-Type", upstream.headers.get("Content-Type") || "application/json; charset=utf-8");

@@ -123,6 +123,22 @@ sections, each of which becomes part of one complete Markdown study document.
 - Copy or download as `.md`.
 - The document is saved to `localStorage`; **the uploaded file and its raw extracted text are not**.
 
+#### Watching a document being written (streaming)
+
+The study document is **streamed**, not delivered all at once:
+
+- The Worker asks NVIDIA NIM for a server-sent-events response (`{"stream": true}`) and pipes the
+  events straight back, so nothing is buffered on the way.
+- The app renders the markdown as it arrives: open the resource while it is processing
+  (**View live** in the job bar, the resource in **Study documents**, or by clicking the resource)
+  and you see the text grow, with a live character count and part indicator.
+- The view follows the writing while you are at the bottom of the panel and stops following when you
+  scroll up, so reading earlier sections is not interrupted.
+- Only the finished document is saved to `localStorage`; the partial text lives in memory and is
+  discarded if the job fails or is cancelled.
+- If the Worker has not been redeployed with streaming support, the app falls back to a normal
+  non-streaming request and shows the document once it is complete.
+
 ### Practice questions (per study kit)
 
 Questions belong to the whole **study kit**: every study document in it is covered.
@@ -296,7 +312,7 @@ Routes:
 | --- | --- |
 | `GET /health` | `{ "ok": true }` |
 | `GET /api/models` | Requires `Authorization: Bearer <NVIDIA key>`. Proxies NVIDIA's `/v1/models`, filters to the allowed families and returns `{ models: [{ id, ownedBy }], filter, count }`. |
-| `POST /api/notes` | Chat completion. Only known fields (`model`, `messages`, `max_tokens`, `temperature`, `top_p`, `chat_template_kwargs.enable_thinking`) are forwarded, `stream` is forced off, bodies are capped at 1 MB, roles and token counts are validated, and the model must match the family filter. |
+| `POST /api/notes` | Chat completion. Only known fields (`model`, `messages`, `max_tokens`, `temperature`, `top_p`, `stream`, `chat_template_kwargs.enable_thinking`) are forwarded, bodies are capped at 1 MB, roles and token counts are validated, and the model must match the family filter. With `{"stream": true}` the upstream server-sent events are piped back as `text/event-stream`. |
 
 The Worker never stores or logs the key — it forwards the caller's `Authorization` header.
 
@@ -310,6 +326,8 @@ The Worker never stores or logs the key — it forwards the caller's `Authorizat
 - Long resources are split into sections, so cross-section connections can be weaker. If a section hits
   the output-token limit the resource status says which part may be short.
 - AI output can be wrong or can miss nuance: check it against the source before revising from it.
+- Live document streaming needs the current Worker deployed. Against an older Worker the app still
+  works: the study document simply appears when it is finished instead of growing on screen.
 - Kits with many resources mean one model request per resource, so generating a large set takes
   proportionally longer — a 40-card deck or a 30-question exam across five resources is ten requests.
 - An exam run lives in memory: reloading the page or closing the tab abandons it (the saved paper and

@@ -14,7 +14,7 @@
 export const SYMUS_CONFIG = Object.freeze({
   // Bump together with the ?v= tokens in arch/config.json and index.html.
   // Shown in Settings and logged at startup so a stale cached build is obvious.
-  version: "2026-10-22b",
+  version: "2026-10-22c",
   model: "nvidia/nemotron-3.5-lightning-30b-a3b",
   workerUrl: "https://symus-backend.chibbit99.workers.dev",
   tesseractPackage: "tesseract.js",

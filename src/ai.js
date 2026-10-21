@@ -65,35 +65,135 @@
     });
   }
 
-  async function requestOnce({ apiKey, prompt, maxTokens, temperature, signal }) {
-    const response = await fetch(WORKER_URL + "/api/notes", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer " + apiKey,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      signal,
-      body: JSON.stringify({
-        model: currentModel(),
-        messages: [{ role: "user", content: prompt }],
-        chat_template_kwargs: { enable_thinking: false },
-        max_tokens: maxTokens,
-        temperature,
-        top_p: 0.9,
-        stream: false,
-      }),
-    });
+  /**
+   * Read a Server-Sent Events response from the Worker, collecting the model's
+   * text deltas. `onToken(delta, soFar)` is called for every chunk so callers
+   * can render a document while it is being written.
+   */
+  async function readEventStream(response, onToken) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    let finishReason = null;
+    let streamError = null;
 
-    const raw = await response.text();
-    let data = null;
+    const handleLine = (rawLine) => {
+      const line = rawLine.trim();
+      if (!line || line.startsWith(":")) return;
+      if (!line.startsWith("data:")) return;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") return;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch (error) {
+        return; // keep-alive or a partial frame
+      }
+
+      if (parsed.error) {
+        streamError = parsed.error.message || parsed.error;
+        return;
+      }
+
+      const choice = parsed.choices && parsed.choices[0];
+      if (!choice) return;
+
+      const delta = choice.delta
+        ? choice.delta.content
+        : choice.message
+          ? choice.message.content
+          : "";
+      if (typeof delta === "string" && delta) {
+        content += delta;
+        onToken(delta, content);
+      }
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+    };
+
     try {
-      data = JSON.parse(raw);
-    } catch (error) {
-      /* handled below */
+      for (;;) {
+        let chunk;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          // The connection dropped mid-stream: retry the whole part.
+          const wrapped = new Error((error && error.message) || "The stream was interrupted.");
+          wrapped.retryable = true;
+          throw wrapped;
+        }
+        const { value, done } = chunk;
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let index;
+        while ((index = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          handleLine(line);
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer) handleLine(buffer);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch (error) {
+        /* already released */
+      }
     }
 
+    if (streamError) {
+      const error = new Error(String(streamError));
+      error.retryable = false;
+      throw error;
+    }
+
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error("The model returned an empty response.");
+    return { content: trimmed, truncated: finishReason === "length" };
+  }
+
+  async function requestOnce({ apiKey, prompt, maxTokens, temperature, signal, onToken }) {
+    const wantStream = typeof onToken === "function";
+    let response;
+    try {
+      response = await fetch(WORKER_URL + "/api/notes", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + apiKey,
+          "Content-Type": "application/json",
+          Accept: wantStream ? "text/event-stream" : "application/json",
+        },
+        signal,
+        body: JSON.stringify({
+          model: currentModel(),
+          messages: [{ role: "user", content: prompt }],
+          chat_template_kwargs: { enable_thinking: false },
+          max_tokens: maxTokens,
+          temperature,
+          top_p: 0.9,
+          stream: wantStream,
+        }),
+      });
+    } catch (error) {
+      if (error && error.name === "AbortError") throw error;
+      // A dropped connection is worth retrying; the stream simply restarts.
+      const wrapped = new Error((error && error.message) || "The request could not be sent.");
+      wrapped.retryable = true;
+      throw wrapped;
+    }
+
+    const contentType = (response.headers.get("Content-Type") || "").toLowerCase();
+
     if (!response.ok) {
+      const raw = await response.text();
+      let data = null;
+      try {
+        data = JSON.parse(raw);
+      } catch (error) {
+        /* handled below */
+      }
       const detail =
         data && data.error && (data.error.message || data.error)
           ? String(data.error.message || data.error)
@@ -104,6 +204,20 @@
       if (data && data.detail) error.detail = String(data.detail);
       throw error;
     }
+
+    // Streaming, when there is a body to read and the Worker honoured it.
+    if (wantStream && response.body && typeof response.body.getReader === "function" && contentType.includes("event-stream")) {
+      return readEventStream(response, onToken);
+    }
+
+    // Fallback: a plain JSON completion (older Worker, or stream refused).
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch (error) {
+      /* handled below */
+    }
     if (!data) throw new Error("The note service returned an unexpected, non-JSON response.");
 
     const choice = data.choices && data.choices[0];
@@ -111,6 +225,7 @@
     if (typeof content !== "string" || !content.trim()) {
       throw new Error("The model returned an empty response.");
     }
+    if (wantStream) onToken(content, content);
     return { content: content.trim(), truncated: choice.finish_reason === "length" };
   }
 
@@ -426,9 +541,13 @@
   }
 
   /**
+   * @param {{apiKey:string, text:string, meta?:object, signal?:AbortSignal,
+   *          onProgress?:Function, onDraft?:Function}} options
+   *   onDraft receives the markdown written so far, so a caller can show the
+   *   document forming while the model streams.
    * @returns {Promise<{markdown:string, truncatedParts:number[], parts:number}>}
    */
-  async function generateDocument({ apiKey, text, meta = {}, signal, onProgress }) {
+  async function generateDocument({ apiKey, text, meta = {}, signal, onProgress, onDraft }) {
     const chunks = splitIntoChunks(text, CHUNK_SIZE);
     if (!chunks.length) throw new Error("There is no text to turn into a document.");
 
@@ -464,6 +583,15 @@
         maxTokens: MAX_TOKENS,
         temperature: 0.3,
         signal,
+        // Stream this part so the caller can render the growing document.
+        onToken: onDraft
+          ? (delta, soFar) => {
+              const parts = sections.concat(
+                chunks.length > 1 && soFar && !/^#{1,2}\s/m.test(soFar) ? [`## Part ${index + 1}\n\n${soFar}`] : [soFar],
+              );
+              onDraft({ markdown: parts.filter(Boolean).join("\n\n"), part: index + 1, total: chunks.length });
+            }
+          : undefined,
         onRetry: (error, attempt) => {
           if (onProgress) {
             onProgress({
@@ -840,6 +968,7 @@
     heuristicOcrPages,
     analyseGaps,
     generateDocument,
+    readEventStream,
     generateQuestions,
     normaliseQuestions,
     generateFlashcards,
