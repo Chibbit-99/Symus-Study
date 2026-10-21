@@ -535,6 +535,11 @@
   async function runFlashcardJob(job) {
     const ai = Symus.ai;
     const target = Math.max(1, Math.min(job.count || 20, 40));
+    // Deck style: vocab/concept cards or exam-style questions.
+    const style =
+      job.style === "question" || job.style === "vocab"
+        ? job.style
+        : Symus.store.getSettings().flashcardStyle || "vocab";
 
     progress(job, { step: `Planning ${target} flashcard(s)…`, progress: 5 });
 
@@ -545,6 +550,7 @@
           apiKey,
           document: resource.document,
           count: quota,
+          style,
           sourceName: resource.name,
           sourceCount,
           partLabel,
@@ -563,6 +569,7 @@
     Symus.store.setKitFlashcards(kit.id, {
       generatedAt: new Date().toISOString(),
       items: cards,
+      style,
       sourceCount: ready.length,
       sourceNames: ready.map((resource) => resource.name),
       coverage,
@@ -661,11 +668,12 @@
     });
   }
 
-  function makeFlashcards(kit, count) {
+  function makeFlashcards(kit, count, style) {
     return enqueue({
       kind: "flashcards",
       kitId: kit.id,
       count,
+      style,
       label: `Flashcards for ${kit.name}`,
     });
   }

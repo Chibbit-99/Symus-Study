@@ -50,6 +50,31 @@
   const $ = (id) => document.getElementById(id);
 
   /* ------------------------------------------------------------------ *
+   * Inline icons (stroke, currentColor) — no external dependency.
+   * ------------------------------------------------------------------ */
+
+  const ICONS = {
+    home: '<path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1Z"/>',
+    kits: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9h16M9 5v14"/>',
+    folder: '<path d="M4 7a1 1 0 0 1 1-1h4l2 2h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    cards: '<rect x="4" y="6" width="12" height="14" rx="2"/><path d="M9 3h9a2 2 0 0 1 2 2v11"/>',
+    book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18a1 1 0 0 1 1 1v14H6.5A1.5 1.5 0 0 0 5 19.5Z"/><path d="M5 19.5A1.5 1.5 0 0 1 6.5 18H19v3H6.5A1.5 1.5 0 0 1 5 19.5Z"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    download: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 19h14"/>',
+    upload: '<path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M5 19h14"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4Z"/>',
+    moon: '<path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
+  };
+
+  function icon(name) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${
+      ICONS[name] || ""
+    }</svg>`;
+  }
+
+  /* ------------------------------------------------------------------ *
    * Small helpers
    * ------------------------------------------------------------------ */
 
@@ -233,22 +258,71 @@
     return wrap;
   }
 
+  function navRow({ action, id = "", label, iconName, count, active, cls = "" }) {
+    return `<button class="nav-item ${active ? "active" : ""} ${cls}" data-action="${action}" data-id="${esc(
+      id,
+    )}" title="${esc(label)}">
+      <span class="nav-icon">${icon(iconName)}</span>
+      <span class="nav-text">${esc(label)}</span>
+      ${count === undefined || count === null ? "" : `<span class="count">${count}</span>`}
+    </button>`;
+  }
+
   function renderSidebar() {
     const state = store.get();
     const totalKits = state.kits.length;
-    const rows = [
-      `<button class="nav-item ${filterClassId ? "" : "active"}" data-action="filter-class" data-id="">
-        <span>All study kits</span><span class="count">${totalKits}</span>
-      </button>`,
-      ...state.classes.map((cls) => {
-        const count = state.kits.filter((kit) => kit.classId === cls.id).length;
-        return `<button class="nav-item ${filterClassId === cls.id ? "active" : ""}" data-action="filter-class" data-id="${esc(cls.id)}">
-          <span>${esc(cls.name)}</span><span class="count">${count}</span>
-        </button>`;
+    const onDashboard = route.name === "dashboard";
+
+    const main = [
+      navRow({
+        action: "filter-class",
+        label: "Dashboard",
+        iconName: "home",
+        count: totalKits,
+        active: onDashboard && !filterClassId,
       }),
-      `<button class="nav-item nav-add" data-action="new-class"><span>+ New class</span></button>`,
     ];
-    els.nav.innerHTML = rows.join("");
+
+    const classes = state.classes.map((cls) =>
+      navRow({
+        action: "filter-class",
+        id: cls.id,
+        label: cls.name,
+        iconName: "folder",
+        count: state.kits.filter((kit) => kit.classId === cls.id).length,
+        active: onDashboard && filterClassId === cls.id,
+      }),
+    );
+
+    els.nav.innerHTML = `
+      <div class="nav-group">
+        <div class="nav-label">Main</div>
+        ${main.join("")}
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Classes</div>
+        ${classes.join("")}
+        <button class="nav-item nav-add" data-action="new-class" title="New class">
+          <span class="nav-icon">${icon("plus")}</span>
+          <span class="nav-text">New class</span>
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Data</div>
+        <button class="nav-item" data-action="export-backup" title="Export a backup">
+          <span class="nav-icon">${icon("download")}</span>
+          <span class="nav-text">Export backup</span>
+        </button>
+        <button class="nav-item" data-action="import-backup" title="Import a backup">
+          <span class="nav-icon">${icon("upload")}</span>
+          <span class="nav-text">Import backup</span>
+        </button>
+      </div>`;
+
+    const summary = document.getElementById("user-meta-line");
+    if (summary) {
+      summary.textContent = `${plural(totalKits, "kit")} · ${plural(state.resources.length, "resource")}`;
+    }
   }
 
   function renderStorage() {
@@ -285,16 +359,20 @@
 
     page.innerHTML = `
       <header class="page-head">
-        <div>
-          <p class="eyebrow">${filterClassId ? "Class" : "Dashboard"}</p>
+        <div class="page-title">
+          <p class="eyebrow">${filterClassId ? "Class" : "Study library"}</p>
           <h1>${esc(filterClassId ? (store.getClass(filterClassId) || {}).name || "Study kits" : "Study kits")}</h1>
-          <p class="muted">${plural(state.kits.length, "kit")} across ${plural(state.classes.length, "class", "classes")} · ${plural(state.resources.length, "resource")}</p>
         </div>
-        <div class="row">
+        <div class="row tight">
           <button class="btn" data-action="new-class">New class</button>
           <button class="btn primary" data-action="new-kit">New study kit</button>
         </div>
       </header>
+      <p class="page-sub">${plural(state.kits.length, "kit")} across ${plural(
+        state.classes.length,
+        "class",
+        "classes",
+      )} · ${plural(state.resources.length, "resource")}. Turn each resource into a study document, then questions, flashcards or a timed exam.</p>
       ${state.kits.length === 0 ? renderEmptyDashboard() : ""}
       <div class="stack">
         ${classes
@@ -310,7 +388,7 @@
                   </div>
                   <div class="row tight">
                     <button class="btn ghost small" data-action="rename-class" data-id="${esc(cls.id)}">Rename</button>
-                    <button class="btn ghost small danger" data-action="delete-class" data-id="${esc(cls.id)}">Delete</button>
+                    <button class="btn ghost small" data-action="delete-class" data-id="${esc(cls.id)}">Delete</button>
                   </div>
                 </header>
                 ${
@@ -342,7 +420,7 @@
     return `
       <div class="empty hero">
         <h2>Create your first study kit</h2>
-        <p class="muted">A study kit holds resources — PDFs or pasted text. Symus Study turns each resource into a complete study document, then writes practice questions from it.</p>
+        <p class="muted">A study kit holds resources — PDFs or pasted text. Symus Study turns each resource into a complete study document, then writes practice questions, flashcards and timed practice exams from it.</p>
         <div class="row center">
           <button class="btn primary" data-action="new-kit">New study kit</button>
           <button class="btn" data-action="new-class">New class</button>
@@ -354,24 +432,34 @@
     const resources = store.resourcesInKit(kit.id);
     const ready = resources.filter((resource) => resource.status === "ready").length;
     const cls = kit.classId ? store.getClass(kit.classId) : null;
+    const counts = [];
+    if (kit.quiz) counts.push(plural(kit.quiz.items.length, "question"));
+    if (kit.flashcards) counts.push(plural(kit.flashcards.items.length, "card"));
+    if (kit.exam) counts.push(`${kit.exam.items.length}-question exam`);
+
+    const status = ready
+      ? `${plural(ready, "resource")} ready`
+      : resources.length
+        ? "No study documents yet"
+        : "No resources yet";
+    const generated = counts.length ? counts.join(" · ") : "";
+
     return `
       <article class="card kit-card">
-        <header class="card-head">
+        <div class="kit-figure">${resources.length}</div>
+        <div class="kit-body">
           <h3><a href="#/kit/${esc(kit.id)}">${esc(kit.name)}</a></h3>
-          ${cls ? `<span class="chip">${esc(cls.name)}</span>` : ""}
-        </header>
-        ${kit.subject ? `<p class="muted small subject">${esc(kit.subject)}</p>` : ""}
-        <p class="muted small">${plural(resources.length, "resource")} · ${ready} ready${
-          kit.quiz ? ` · ${plural(kit.quiz.items.length, "question")}` : ""
-        }${kit.flashcards ? ` · ${plural(kit.flashcards.items.length, "card")}` : ""}${
-          kit.exam ? ` · ${plural(kit.exam.items.length, "exam question")}` : ""
-        }<br>updated ${esc(relativeTime(kit.updatedAt))}</p>
-        <footer class="card-foot">
-          <a class="btn small primary" href="#/kit/${esc(kit.id)}">Open</a>
-          <button class="btn ghost small" data-action="rename-kit" data-id="${esc(kit.id)}">Rename</button>
-          <button class="btn ghost small" data-action="move-kit" data-id="${esc(kit.id)}">Move</button>
-          <button class="btn ghost small danger" data-action="delete-kit" data-id="${esc(kit.id)}">Delete</button>
-        </footer>
+          <p class="kit-meta">${esc(kit.subject || status)}</p>
+          ${kit.subject ? `<p class="kit-sub">${esc(status)}</p>` : ""}
+          <p class="kit-sub">${generated ? `${esc(generated)} · ` : ""}updated ${esc(relativeTime(kit.updatedAt))}</p>
+          ${cls ? `<div class="kit-tag"><span class="chip">${esc(cls.name)}</span></div>` : ""}
+        </div>
+        <div class="kit-actions">
+          <button class="btn primary small" data-action="open-kit" data-id="${esc(kit.id)}">Open</button>
+          <button class="btn small" data-action="rename-kit" data-id="${esc(kit.id)}">Rename</button>
+          <button class="btn small" data-action="move-kit" data-id="${esc(kit.id)}">Move</button>
+          <button class="btn small" data-action="delete-kit" data-id="${esc(kit.id)}">Delete</button>
+        </div>
       </article>`;
   }
 
@@ -419,13 +507,13 @@
     page.innerHTML = `
       <nav class="crumbs"><a href="#/">Dashboard</a><span>/</span>${cls ? `<a href="#/">${esc(cls.name)}</a><span>/</span>` : ""}<span>${esc(kit.name)}</span></nav>
       <header class="page-head">
-        <div>
+        <div class="page-title">
+          <p class="eyebrow">${esc(kit.subject || "Study kit")}</p>
           <h1>${esc(kit.name)}</h1>
-          <p class="muted">${plural(resources.length, "resource")}${kit.subject ? " · " + esc(kit.subject) : ""}</p>
         </div>
-        <div class="row">
+        <div class="row tight">
           <button class="btn" data-action="edit-kit" data-id="${esc(kit.id)}">Edit details</button>
-          <button class="btn danger" data-action="delete-kit" data-id="${esc(kit.id)}">Delete kit</button>
+          <button class="btn" data-action="delete-kit" data-id="${esc(kit.id)}">Delete kit</button>
         </div>
       </header>
       ${kitTabs(kit, resources, tab)}
@@ -697,7 +785,9 @@
         <div class="panel-head">
           <div>
             <h2>Flashcards</h2>
-            <p class="muted tiny">Revision cards drawn from all ${plural(withDocs.length, "study document")} in this kit.</p>
+            <p class="muted tiny">${
+              cards ? `${cards.style === "question" ? "Exam-style question cards" : "Vocabulary & concept cards"} · ` : ""
+            }drawn from all ${plural(withDocs.length, "study document")} in this kit.</p>
           </div>
           <div class="row tight">
             <button class="btn small ${cards ? "" : "primary"}" data-action="make-flashcards" data-id="${esc(kit.id)}">${
@@ -733,6 +823,9 @@
     const card = items[order[position]];
     if (!card) return "";
 
+    const vocab = kit.flashcards.style !== "question";
+    const frontLabel = vocab ? "Term" : "Question";
+    const backLabel = vocab ? "Definition" : "Answer";
     const knownCount = Object.keys(flashState.known).length;
     const againCount = Object.keys(flashState.again).length;
     const percent = Math.round((position / order.length) * 100);
@@ -747,7 +840,7 @@
         </div>
         <div class="deck-meter"><span style="width:${percent}%"></span></div>
         <button class="flashcard ${flashState.flipped ? "flipped" : ""}" data-action="flip-card" aria-label="Flashcard">
-          <span class="fc-side">${flashState.flipped ? "Answer" : "Prompt"}</span>
+          <span class="fc-side">${flashState.flipped ? backLabel : frontLabel}</span>
           <span class="fc-text">${esc(flashState.flipped ? card.back : card.front)}</span>
           <span class="fc-hint">${
             flashState.flipped ? "Click to see the prompt again" : "Click or press Space to reveal"
@@ -986,7 +1079,8 @@
     page.innerHTML = `
       <nav class="crumbs"><a href="#/">Dashboard</a><span>/</span><a href="#/kit/${esc(resource.kitId)}">${esc(kit ? kit.name : "Kit")}</a><span>/</span><span>${esc(resource.name)}</span></nav>
       <header class="page-head">
-        <div>
+        <div class="page-title">
+          <p class="eyebrow">Resource</p>
           <h1>${esc(resource.name)}</h1>
           <p class="muted">
             <span class="badge ${esc(resource.status)}">${esc(STATUS_LABEL[resource.status] || resource.status)}</span>
@@ -1393,6 +1487,14 @@
             </select>
           </div>
         </div>
+        <div class="field">
+          <label for="set-cards">Flashcards</label>
+          <select id="set-cards">
+            <option value="vocab" ${settings.flashcardStyle === "vocab" ? "selected" : ""}>Vocabulary &amp; concepts — term on the front, definition on the back</option>
+            <option value="question" ${settings.flashcardStyle === "question" ? "selected" : ""}>Exam-style questions — question on the front, answer on the back</option>
+          </select>
+          <span class="hint">The default for new decks. You can still pick the other style when generating one.</span>
+        </div>
         <div class="notice subtle">
           <strong>Build:</strong> ${esc((globalThis.SYMUS_CONFIG || {}).version || "unknown")}
           <span class="tiny">— if this is not the build you expect, hard-reload (Ctrl/Cmd-Shift-R).</span><br>
@@ -1477,6 +1579,7 @@
           model,
           ocrLanguage: root.querySelector("#set-lang").value,
           ocrScale: Number(root.querySelector("#set-scale").value),
+          flashcardStyle: root.querySelector("#set-cards").value,
         });
         toast("Settings saved.", "success");
       },
@@ -1540,7 +1643,8 @@
 
   function flashcardsToMarkdown(kit) {
     const set = kit.flashcards;
-    const lines = [`# ${kit.name} — flashcards`, ""];
+    const styleLabel = set.style === "question" ? "exam-style questions" : "vocabulary & concepts";
+    const lines = [`# ${kit.name} — flashcards (${styleLabel})`, ""];
     if (set.sourceNames && set.sourceNames.length) lines.push(`Sources: ${set.sourceNames.join(", ")}`, "");
     set.items.forEach((card, index) => {
       lines.push(`**${index + 1}. ${card.front}**`, "", card.back, "");
@@ -1626,6 +1730,9 @@
     const kit = store.getKit(kitId);
     if (!kit) return;
     const withDocs = store.resourcesInKit(kit.id).filter((resource) => resource.document);
+    // The saved preference wins; a deck's own style is the fallback.
+    const defaultStyle =
+      store.getSettings().flashcardStyle || (kit.flashcards && kit.flashcards.style) || "vocab";
 
     openModal({
       title: "Generate flashcards",
@@ -1635,11 +1742,32 @@
           Cards are written from <strong>all ${plural(withDocs.length, "study document")}</strong> in
           “${esc(kit.name)}”. Each resource is asked for its own share, so the deck covers the whole kit.
         </div>
-        <div class="field"><label for="cards-count">How many cards</label>
-          <select id="cards-count">
-            ${[10, 20, 30, 40].map((n) => `<option value="${n}" ${n === 20 ? "selected" : ""}>${n}</option>`).join("")}
-          </select>
-        </div>`,
+        <div class="field-row">
+          <div class="field"><label for="cards-count">How many cards</label>
+            <select id="cards-count">
+              ${[10, 20, 30, 40].map((n) => `<option value="${n}" ${n === 20 ? "selected" : ""}>${n}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field"><label for="cards-style">Card style</label>
+            <select id="cards-style">
+              <option value="vocab" ${defaultStyle === "vocab" ? "selected" : ""}>Vocabulary &amp; concepts</option>
+              <option value="question" ${defaultStyle === "question" ? "selected" : ""}>Exam-style questions</option>
+            </select>
+          </div>
+        </div>
+        <div class="notice subtle" id="cards-style-hint"></div>`,
+      onMount: (root) => {
+        const select = root.querySelector("#cards-style");
+        const hint = root.querySelector("#cards-style-hint");
+        const render = () => {
+          hint.innerHTML =
+            select.value === "question"
+              ? "<strong>Question cards:</strong> the front is an exam-style question, the back is the model answer."
+              : "<strong>Vocabulary cards:</strong> the front is a term or concept, the back is its definition.";
+        };
+        select.addEventListener("change", render);
+        render();
+      },
       onConfirm: (root) => {
         if (!withDocs.length) {
           toast("Add a resource with a study document first.", "error");
@@ -1647,9 +1775,10 @@
         }
         if (!requireKey()) return false;
         const count = Number(root.querySelector("#cards-count").value);
+        const style = root.querySelector("#cards-style").value === "question" ? "question" : "vocab";
         resetDeck(kit.id);
-        jobs.makeFlashcards(kit, count);
-        toast("Generating flashcards…");
+        jobs.makeFlashcards(kit, count, style);
+        toast(style === "question" ? "Generating question cards…" : "Generating vocabulary cards…");
       },
     });
   }
@@ -1849,6 +1978,20 @@
         break;
       case "new-kit":
         openNewKit();
+        break;
+      case "open-kit":
+        navigate(`#/kit/${id}`);
+        break;
+      case "export-backup":
+        download(
+          `symus-study-backup-${new Date().toISOString().slice(0, 10)}.json`,
+          store.exportData(),
+          "application/json",
+        );
+        toast("Backup exported.", "success");
+        break;
+      case "import-backup":
+        $("import-file").click();
         break;
       case "new-class":
         openNewClass();
@@ -2174,6 +2317,45 @@
 
     $("btn-menu").addEventListener("click", () => {
       document.body.classList.toggle("nav-open");
+    });
+
+    /* Theme: light by default, dark on demand; remembered per browser. */
+    const themeButton = $("btn-theme");
+    const applyTheme = (theme) => {
+      document.documentElement.dataset.theme = theme;
+      themeButton.innerHTML = theme === "dark" ? icon("sun") : icon("moon");
+      themeButton.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", theme === "dark" ? "#0f1011" : "#ffffff");
+    };
+    applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    themeButton.addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      applyTheme(next);
+      try {
+        localStorage.setItem("symus.theme", next);
+      } catch (error) {
+        /* private mode */
+      }
+    });
+
+    /* Sidebar: collapse to an icon rail on wide screens. */
+    const collapseButton = $("btn-collapse");
+    const syncCollapse = () => {
+      const collapsed = document.body.classList.contains("nav-collapsed");
+      collapseButton.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+      collapseButton.setAttribute("aria-label", collapseButton.title);
+      collapseButton.setAttribute("aria-expanded", String(!collapsed));
+    };
+    syncCollapse();
+    collapseButton.addEventListener("click", () => {
+      document.body.classList.toggle("nav-collapsed");
+      try {
+        localStorage.setItem("symus.nav", document.body.classList.contains("nav-collapsed") ? "collapsed" : "open");
+      } catch (error) {
+        /* private mode */
+      }
+      syncCollapse();
     });
 
     window.addEventListener("hashchange", () => {

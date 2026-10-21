@@ -25,13 +25,24 @@
     `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const now = () => new Date().toISOString();
 
+  // How flashcards are written: a vocabulary/concept deck (term -> definition)
+  // or an exam-style question deck (question -> answer).
+  const FLASHCARD_STYLES = ["vocab", "question"];
+  const DEFAULT_FLASHCARD_STYLE = "vocab";
+
   function blankState() {
     return {
       version: VERSION,
       classes: [],
       kits: [],
       resources: [],
-      settings: { apiKey: "", model: DEFAULT_MODEL, ocrLanguage: "eng", ocrScale: 2 },
+      settings: {
+        apiKey: "",
+        model: DEFAULT_MODEL,
+        ocrLanguage: "eng",
+        ocrScale: 2,
+        flashcardStyle: DEFAULT_FLASHCARD_STYLE,
+      },
     };
   }
 
@@ -110,6 +121,9 @@
       model: str(settings.model).trim() || DEFAULT_MODEL,
       ocrLanguage: OCR_LANGUAGES.includes(settings.ocrLanguage) ? settings.ocrLanguage : "eng",
       ocrScale: clampScale(settings.ocrScale),
+      flashcardStyle: FLASHCARD_STYLES.includes(settings.flashcardStyle)
+        ? settings.flashcardStyle
+        : DEFAULT_FLASHCARD_STYLE,
     };
     return next;
   }
@@ -173,6 +187,9 @@
     return {
       generatedAt: str(raw.generatedAt),
       items,
+      // Which style of deck this is, so the player can label the card face and
+      // a regeneration can default to the same style.
+      style: FLASHCARD_STYLES.includes(raw.style) ? raw.style : DEFAULT_FLASHCARD_STYLE,
       sourceCount: Number.isFinite(raw.sourceCount) ? raw.sourceCount : 0,
       sourceNames: normaliseSources(raw.sourceNames),
       coverage: normaliseCoverage(raw.coverage),
@@ -481,6 +498,11 @@
       state.settings.ocrLanguage = OCR_LANGUAGES.includes(patch.ocrLanguage) ? patch.ocrLanguage : "eng";
     }
     if ("ocrScale" in patch) state.settings.ocrScale = clampScale(patch.ocrScale);
+    if ("flashcardStyle" in patch) {
+      state.settings.flashcardStyle = FLASHCARD_STYLES.includes(patch.flashcardStyle)
+        ? patch.flashcardStyle
+        : DEFAULT_FLASHCARD_STYLE;
+    }
     commit();
     return state.settings;
   }
@@ -584,6 +606,8 @@
     getSettings,
     OCR_LANGUAGES,
     DEFAULT_MODEL,
+    FLASHCARD_STYLES,
+    DEFAULT_FLASHCARD_STYLE,
     getApiKey,
     exportData,
     importData,
