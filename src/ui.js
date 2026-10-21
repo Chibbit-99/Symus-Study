@@ -420,7 +420,7 @@
     return `
       <div class="empty hero">
         <h2>Create your first study kit</h2>
-        <p class="muted">A study kit holds resources — PDFs or pasted text. Symus Study turns each resource into a complete study document, then writes practice questions, flashcards and timed practice exams from it.</p>
+        <p class="muted">A study kit holds resources — PDFs or pasted text. Symus Study condenses each resource into summary study notes, then writes practice questions, flashcards and timed practice exams from them.</p>
         <div class="row center">
           <button class="btn primary" data-action="new-kit">New study kit</button>
           <button class="btn" data-action="new-class">New class</button>
@@ -541,7 +541,7 @@
             <p><strong>Drop PDFs here</strong></p>
             <p class="muted small">or</p>
             <button class="btn primary" data-action="pick-pdf">Choose PDF files</button>
-            <p class="muted tiny">The text layer is read first; OCR is only used on pages that are missing text.</p>
+            <p class="muted tiny">The text layer is read first; OCR is only used on pages that are missing text. You get condensed summary notes, not a copy of the source.</p>
           </div>
 
           <div class="divider"><span>or paste text</span></div>

@@ -3,7 +3,8 @@
 **Live app: <https://chibbit-99.github.io/Symus-Study/>**
 
 A browser-only study workspace. Organise **classes → study kits → resources**, turn PDFs and pasted
-text into complete AI-written study documents, and generate practice questions from them.
+text into condensed AI-written summary study notes, and generate practice questions, flashcards and a
+timed exam from them.
 
 No build step, no install, no server of your own. Your data stays in your browser.
 
@@ -115,9 +116,20 @@ OCR uses Tesseract.js at the render quality and language set in **Settings**. Th
 across pages and jobs, and only downloaded the first time a page actually needs OCR.
 
 The extracted text (text layer + OCR) is then merged and sent to the model in ~24 000-character
-sections, each of which becomes part of one complete Markdown study document.
+sections. Each section is **condensed** into summary notes — around a third of its length, in the
+model's own words — and the sections are joined into one Markdown study document.
 
 ### Study documents
+
+The document is **summary study notes**, not a reformatted copy of the resource:
+
+- Each idea is rewritten in condensed form — definitions, formulas, dates, named examples, processes
+  and comparisons survive; repetition, filler, tangents and pointless examples do not.
+- The target is roughly **one third of the source length** (25–35% of its words), never more than half.
+- Headings group themes, bullets keep it skimmable, key terms are bold, comparisons become tables, and
+  a short **Key takeaways** list closes the notes.
+- The prompt explicitly forbids copying source sentences: if a sentence could be pasted back into the
+  original unchanged, it must be rewritten or dropped.
 
 - Rendered as Markdown, or edited in place (manual corrections are saved).
 - Copy or download as `.md`.

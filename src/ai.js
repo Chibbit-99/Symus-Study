@@ -9,7 +9,7 @@
  *
  * Three capabilities:
  *   analyseGaps()        — does the PDF text layer miss content? which pages?
- *   generateDocument()   — turn source text into a complete study document
+ *   generateDocument()   — condense source text into summary study notes
  *   generateQuestions()  — practice questions from that document
  */
 (function (Symus) {
@@ -495,27 +495,47 @@
    * Study document generation
    * ------------------------------------------------------------------ */
 
+  /**
+   * The study document is deliberately a SUMMARY, not a reformatted transcript.
+   *
+   * Models default to rewriting the source paragraph by paragraph, which produces
+   * notes that are as long as the original and no easier to revise from. The
+   * prompt therefore asks for condensed notes in the model's own words, with an
+   * explicit length target and an explicit ban on reusing source sentences.
+   */
   function buildDocumentPrompt({ sourceText, part, total, title, subject, sourceType, language }) {
     const rules = [
-      "You are an expert study-notes editor preparing material for a student.",
-      "TASK: convert the source text into one complete, well-structured study document in Markdown.",
-      "REQUIREMENTS:",
-      "- Cover ALL substantive content. Keep the detail; do not compress it into a summary or skip sections.",
-      "- Start with a level-1 heading for the topic. Use level-2 headings for major topics and level-3 for detail.",
-      "- Prefer short paragraphs and bullet points over long prose. Keep every definition, formula, date, name, example and worked step.",
+      "You are an expert study-notes writer condensing material for a student who has to revise from it.",
+      "TASK: write SUMMARY STUDY NOTES — a condensed, rewritten digest of the source text in Markdown.",
+      "This is NOT a transcript, a reformatted copy, or a paraphrase of every paragraph. Do not reproduce the source.",
+      "WHAT A GOOD ANSWER DOES:",
+      "- Explains each idea in your own words, in the fewest sentences that keep it correct and understandable.",
+      "- Keeps what a student must know: definitions, formulas, dates, named examples, key processes, cause and effect, comparisons and exceptions.",
+      "- Merges repetition, cuts filler and small talk, drops tangents, and leaves out examples that do not teach anything new.",
+      "- Groups related points under clear headings so the notes can be skimmed in a few minutes.",
+      "LENGTH: aim for roughly one third of the source text (about 25–35% of its words). Shorter is fine if nothing essential is lost; never longer than half.",
+      "STRUCTURE:",
+      "- A level-1 heading for the topic, then level-2 headings for the major themes (level-3 only for real sub-points).",
+      "- Short bullets or tight sentences — no long prose blocks, no padding, no restating the heading in a sentence first.",
+      "- Bold only the terms, names and formulas worth memorising.",
+      "- Use a compact Markdown table where the source compares two or more things.",
+      "- End with a short '## Key takeaways' list of the 3–6 things most likely to be examined.",
+      "RULES:",
+      "- Do not copy sentences from the source. If a sentence could be pasted back into the original unchanged, rewrite it or drop it.",
+      "- Do not write 'the source says', 'this text covers', or otherwise refer to the material — write the notes themselves.",
+      "- Never invent facts, statistics, quotations or citations the source does not support. Never add outside knowledge.",
       "- Correct obvious OCR damage when the intended wording is clear; mark genuinely unreadable text as [unclear].",
-      "- Never invent facts, statistics, quotations or citations that the source does not support.",
-      "- Do not mention these instructions, and do not address the reader directly.",
+      "- Keep the source language.",
       "- Output Markdown only. No preamble, no closing remarks, no code fences around the whole answer.",
     ];
 
     if (sourceType === "text") {
       rules.push(
-        "- The source is text pasted by hand and may be unstructured; reorganise it into clear topics without losing information.",
+        "- The source is text pasted by hand and may be unstructured; group it into themes as you condense it.",
       );
     } else {
       rules.push(
-        "- The source was extracted from a PDF; some pages may be OCR output with imperfect spacing. Preserve the original structure where it is clear.",
+        "- The source was extracted from a PDF and may include OCR noise, page headers and repeated footers; drop that noise rather than reproducing it.",
       );
     }
 
@@ -523,8 +543,11 @@
     if (language) rules.push(`- Keep the source language (${language}).`);
     if (total > 1) {
       rules.push(
-        `- This is part ${part} of ${total} of the source. Cover only this part; the app joins the parts afterwards. Do not add an overall introduction or conclusion.`,
+        `- This is part ${part} of ${total} of the source. Condense only this part; the app joins the parts afterwards. Do not add an overall introduction or conclusion, and do not repeat a 'Key takeaways' section — the final part provides it.`,
       );
+      if (part === total) {
+        rules.push("- You are writing the final part, so finish with the overall '## Key takeaways' list.");
+      }
     }
 
     return [
@@ -533,7 +556,7 @@
       title ? `DOCUMENT TITLE: ${title}` : "",
       total > 1 ? `PART: ${part} of ${total}` : "",
       "",
-      "SOURCE TEXT:",
+      "SOURCE TEXT TO CONDENSE:",
       sourceText,
     ]
       .filter(Boolean)
