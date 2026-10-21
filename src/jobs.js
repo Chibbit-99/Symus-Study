@@ -6,7 +6,9 @@
  *   PDF   read text layer -> AI gap check -> OCR flagged pages
  *         -> AI study document -> save document to localStorage
  *   text  AI study document -> save document to localStorage
- *   quiz  AI practice questions from every saved document in a study kit
+ *   quiz / flashcards / exam
+ *         AI study material from every saved document in a study kit,
+ *         allocated per resource so each one is actually covered
  *
  * Uploaded files and extracted source text stay in memory only. What is
  * persisted is the generated study document and the questions.
@@ -157,6 +159,10 @@
         return runTextJob(job);
       case "quiz":
         return runQuizJob(job);
+      case "flashcards":
+        return runFlashcardJob(job);
+      case "exam":
+        return runExamJob(job);
       default:
         throw new Error("Unknown job type: " + job.kind);
     }
@@ -362,7 +368,20 @@
     progress(job, { step: "Study document ready.", progress: 100 });
   }
 
-  async function runQuizJob(job) {
+  /**
+   * Ask every resource in a kit for its own share of a study set.
+   *
+   * One prompt containing every document makes the model concentrate on a single
+   * resource, so each resource gets a quota (see ai.planQuizAllocation), is
+   * requested separately, and the results are returned as per-resource groups
+   * for the caller to merge. A failed pass is recorded and skipped rather than
+   * losing the whole set.
+   *
+   * @returns {Promise<{kit: object, ready: object[], groups: object[][],
+   *                    coverage: object[], failures: object[]}>}
+   */
+  async function collectAcrossResources(job, { target, generate }) {
+    const ai = Symus.ai;
     const apiKey = requireKey();
     const kit = Symus.store.getKit(job.kitId);
     if (!kit) throw new Error("That study kit no longer exists.");
@@ -377,71 +396,233 @@
       );
     }
 
-    progress(job, { step: `Reading ${ready.length} study document(s)…`, progress: 10 });
+    const allocation = ai.planQuizAllocation(
+      ready.map((resource) => ({ id: resource.id, name: resource.name, length: resource.document.length })),
+      target,
+    );
+    const byId = new Map(ready.map((resource) => [resource.id, resource]));
+    const coverage = allocation.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      requested: entry.quota,
+      produced: 0,
+    }));
+    const failures = [];
+    const groups = [];
 
-    const source = combineDocuments(ready);
-    if (!source.text.trim()) throw new Error("The study documents in this kit are empty.");
+    const ask = async (resourceId, quota, label) => {
+      const resource = byId.get(resourceId);
+      if (!resource) return [];
+      const entry = coverage.find((item) => item.id === resourceId);
 
-    progress(job, {
-      step:
-        ready.length > 1
-          ? `Writing practice questions from ${ready.length} resources…`
-          : "Writing practice questions…",
-      progress: 20,
+      try {
+        const items = await generate({
+          apiKey,
+          resource,
+          quota,
+          sourceCount: allocation.length,
+          partLabel: `“${resource.name}” (${label})`,
+          signal: job.controller.signal,
+          onProgress: (message) => progress(job, { step: message }),
+        });
+        if (entry) entry.produced += items.length;
+        return items;
+      } catch (error) {
+        if (error && error.name === "AbortError") throw error;
+        failures.push({ name: resource.name, message: ai.describeError(error) });
+        console.warn("[Symus Study] Pass failed for", resource.name, error);
+        return [];
+      }
+    };
+
+    for (let index = 0; index < allocation.length; index++) {
+      const entry = allocation[index];
+      progress(job, {
+        step: `Writing ${entry.quota} for “${entry.name}” (${index + 1}/${allocation.length})…`,
+        progress: 10 + (index / allocation.length) * 70,
+      });
+      const items = await ask(entry.id, entry.quota, `${index + 1}/${allocation.length}`);
+      if (items.length) groups.push(items);
+    }
+
+    // If the model came back short (or a pass failed), top up once using the
+    // resources that did produce something, so the requested count is met.
+    let produced = coverage.reduce((sum, item) => sum + item.produced, 0);
+    const donors = coverage.filter((item) => item.produced > 0);
+    if (produced < target && donors.length && !job.controller.signal.aborted) {
+      const shortfall = Math.min(target - produced, 10);
+      progress(job, {
+        step: `Requesting ${shortfall} more to reach ${target}…`,
+        progress: 85,
+      });
+      const topUp = ai.planQuizAllocation(
+        donors.map((item) => ({
+          id: item.id,
+          name: item.name,
+          length: (byId.get(item.id) || { document: "" }).document.length,
+        })),
+        shortfall,
+      );
+      for (const entry of topUp) {
+        const extra = await ask(entry.id, entry.quota, "top-up");
+        if (extra.length) groups.push(extra);
+      }
+    }
+
+    return { kit, ready, groups, coverage, failures };
+  }
+
+  /** Merge per-resource groups, keeping de-duplication and interleaving. */
+  function mergeGroups(groups, { dedupe }) {
+    return dedupe(Symus.ai.interleaveQuestionGroups(groups));
+  }
+
+  function quizFailure(failures, what) {
+    return failures.length
+      ? `Could not write ${what}: ${failures[0].message}`
+      : `The model did not return usable ${what}. Try again or add more content to this kit.`;
+  }
+
+  /**
+   * Practice questions for a whole kit: allocated per resource, merged,
+   * de-duplicated and interleaved.
+   */
+  async function runQuizJob(job) {
+    const ai = Symus.ai;
+    const target = Math.max(1, Math.min(job.count || 10, 25));
+
+    progress(job, { step: `Planning ${target} question(s)…`, progress: 5 });
+
+    const { kit, ready, groups, coverage, failures } = await collectAcrossResources(job, {
+      target,
+      generate: ({ apiKey, resource, quota, sourceCount, partLabel, signal, onProgress }) =>
+        ai.generateQuestions({
+          apiKey,
+          document: resource.document,
+          count: quota,
+          difficulty: job.difficulty || "",
+          sourceName: resource.name,
+          sourceCount,
+          partLabel,
+          signal,
+          onProgress,
+        }),
     });
 
-    const questions = await Symus.ai.generateQuestions({
-      apiKey,
-      document: source.text,
-      count: job.count || 10,
-      difficulty: job.difficulty || "",
-      signal: job.controller.signal,
-      onProgress: (message) => progress(job, { step: message, progress: 45 }),
-    });
+    const questions = mergeGroups(groups, { dedupe: ai.dedupeQuestions });
+    if (!questions.length) throw new Error(quizFailure(failures, "questions"));
 
+    const missing = coverage.filter((item) => item.produced === 0);
     Symus.store.setKitQuiz(kit.id, {
       generatedAt: new Date().toISOString(),
       items: questions,
       sourceCount: ready.length,
       sourceNames: ready.map((resource) => resource.name),
-      truncated: source.truncated,
+      coverage,
+      failures,
+      truncated: ready.some((resource) => resource.document.length > ai.MAX_QUIZ_SOURCE_CHARS),
     });
-    progress(job, { step: `${questions.length} practice questions ready.`, progress: 100 });
+
+    progress(job, {
+      step: missing.length
+        ? `${questions.length} question(s) ready; none for ${missing.length} resource(s).`
+        : `${questions.length} question(s) ready across ${coverage.length} resource(s).`,
+      progress: 100,
+    });
   }
 
-  /**
-   * Join every document in the kit into one source for the model.
-   *
-   * When the combined text is longer than the model should be fed in one go,
-   * each resource contributes a proportional slice instead of the first
-   * resources swallowing the whole budget, so questions still cover the kit.
-   */
-  function combineDocuments(resources) {
-    const budget = Symus.ai.MAX_QUIZ_SOURCE_CHARS;
-    const blocks = resources.map((resource) => ({
-      name: resource.name,
-      text: resource.document.trim(),
-    }));
-    const totalLength = blocks.reduce((sum, block) => sum + block.text.length, 0);
-    const truncated = totalLength > budget;
+  /** Flashcards for a whole kit, allocated per resource like the questions. */
+  async function runFlashcardJob(job) {
+    const ai = Symus.ai;
+    const target = Math.max(1, Math.min(job.count || 20, 40));
 
-    if (truncated) {
-      const share = Math.max(600, Math.floor(budget / blocks.length));
-      for (const block of blocks) {
-        if (block.text.length > share) {
-          const cut = block.text.lastIndexOf("\n\n", share);
-          block.text = block.text.slice(0, cut > share * 0.5 ? cut : share).trim() + "\n\n[…section truncated…]";
-        }
-      }
-    }
+    progress(job, { step: `Planning ${target} flashcard(s)…`, progress: 5 });
 
-    return {
-      truncated,
-      text: blocks
-        .map((block) => `## Resource: ${block.name}\n\n${block.text}`)
-        .join("\n\n---\n\n")
-        .slice(0, budget + 2000),
-    };
+    const { kit, ready, groups, coverage, failures } = await collectAcrossResources(job, {
+      target,
+      generate: async ({ apiKey, resource, quota, sourceCount, partLabel, signal, onProgress }) => {
+        const cards = await ai.generateFlashcards({
+          apiKey,
+          document: resource.document,
+          count: quota,
+          sourceName: resource.name,
+          sourceCount,
+          partLabel,
+          signal,
+          onProgress,
+        });
+        // Remember which resource each card came from, for the deck's footer.
+        return cards.map((card) => ({ ...card, source: resource.name }));
+      },
+    });
+
+    const cards = mergeGroups(groups, { dedupe: ai.dedupeFlashcards });
+    if (!cards.length) throw new Error(quizFailure(failures, "flashcards"));
+
+    const missing = coverage.filter((item) => item.produced === 0);
+    Symus.store.setKitFlashcards(kit.id, {
+      generatedAt: new Date().toISOString(),
+      items: cards,
+      sourceCount: ready.length,
+      sourceNames: ready.map((resource) => resource.name),
+      coverage,
+      failures,
+    });
+
+    progress(job, {
+      step: missing.length
+        ? `${cards.length} flashcard(s) ready; none for ${missing.length} resource(s).`
+        : `${cards.length} flashcard(s) ready across ${coverage.length} resource(s).`,
+      progress: 100,
+    });
+  }
+
+  /** A timed practice exam: multiple choice, allocated per resource. */
+  async function runExamJob(job) {
+    const ai = Symus.ai;
+    const target = Math.max(1, Math.min(job.count || 20, 40));
+
+    progress(job, { step: `Planning a ${target}-question exam…`, progress: 5 });
+
+    const { kit, ready, groups, coverage, failures } = await collectAcrossResources(job, {
+      target,
+      generate: ({ apiKey, resource, quota, sourceCount, partLabel, signal, onProgress }) =>
+        ai.generateQuestions({
+          apiKey,
+          document: resource.document,
+          count: quota,
+          difficulty: "exam",
+          style: "exam",
+          sourceName: resource.name,
+          sourceCount,
+          partLabel,
+          signal,
+          onProgress,
+        }),
+    });
+
+    const questions = mergeGroups(groups, { dedupe: ai.dedupeQuestions }).slice(0, target);
+    if (!questions.length) throw new Error(quizFailure(failures, "exam questions"));
+
+    // Default timing: a little over a minute per question, rounded to 5 minutes.
+    const minutes = job.durationMinutes
+      ? Math.min(180, Math.max(1, Math.round(job.durationMinutes)))
+      : Math.max(5, Math.round((questions.length * 1.2) / 5) * 5);
+
+    Symus.store.setKitExam(kit.id, {
+      generatedAt: new Date().toISOString(),
+      items: questions,
+      durationMinutes: minutes,
+      sourceCount: ready.length,
+      sourceNames: ready.map((resource) => resource.name),
+      coverage,
+      failures,
+    });
+
+    progress(job, {
+      step: `${questions.length}-question exam ready · ${minutes} minutes.`,
+      progress: 100,
+    });
   }
 
   /* ------------------------------------------------------------------ *
@@ -480,13 +661,33 @@
     });
   }
 
+  function makeFlashcards(kit, count) {
+    return enqueue({
+      kind: "flashcards",
+      kitId: kit.id,
+      count,
+      label: `Flashcards for ${kit.name}`,
+    });
+  }
+
+  function makeExam(kit, count, durationMinutes) {
+    return enqueue({
+      kind: "exam",
+      kitId: kit.id,
+      count,
+      durationMinutes,
+      label: `Practice exam for ${kit.name}`,
+    });
+  }
+
   Symus.jobs = {
     subscribe,
     enqueue,
     uploadPdf,
     uploadText,
     makeQuiz,
-    combineDocuments,
+    makeFlashcards,
+    makeExam,
     cancelCurrent,
     cancelAll,
     getCurrent,

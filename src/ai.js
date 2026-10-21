@@ -494,15 +494,27 @@
    * Practice questions
    * ------------------------------------------------------------------ */
 
-  function buildQuestionsPrompt(document, count, difficulty) {
-    return [
-      "You are writing practice questions for a student, based only on the study document below.",
-      `Create ${count} questions that spread evenly across ALL of the material below, starting with foundational recall and ending with applied reasoning.`,
-      "The material may combine several resources from one study kit, each introduced by a '## Resource:' heading.",
-      "Cover every resource that has enough content to question, in proportion to its size. Never ask about a single resource only.",
-      "Mix the formats:",
-      "- about 60% multiple choice with exactly 4 options and one correct answer;",
-      "- about 40% short answer with a model answer of 1–3 sentences.",
+  function buildQuestionsPrompt(document, count, difficulty, options = {}) {
+    const single = Boolean(options.sourceName);
+    const exam = options.style === "exam";
+    const lines = [
+      single
+        ? `You are writing practice questions for a student, based only on the study document for one resource of a study kit: "${options.sourceName}".`
+        : "You are writing practice questions for a student, based only on the study document below.",
+      single
+        ? `Write exactly ${count} question(s) about THIS resource. Another pass covers the kit's other resources, so do not stray from this material.`
+        : `Create ${count} questions that spread evenly across the material, starting with foundational recall and ending with applied reasoning.`,
+      single && options.sourceCount > 1
+        ? `This is one of ${options.sourceCount} resources in the kit; questions must be answerable from this document alone.`
+        : "",
+      exam
+        ? "This is a TIMED PRACTICE EXAM. Every question must be multiple choice with exactly 4 options and one correct answer — no short-answer questions."
+        : "Mix the formats:",
+      exam
+        ? "Write exam-style questions: applied reasoning, comparisons and multi-step problems rather than simple definitions. Difficulty should be uniform and representative of a real exam."
+        : "- about 60% multiple choice with exactly 4 options and one correct answer;",
+      exam ? "" : "- about 40% short answer with a model answer of 1–3 sentences.",
+      count === 1 ? "- One question only: pick the single most important idea in the material." : "",
       "Rules:",
       "- Every question must be answerable from the document alone.",
       "- Do not copy sentences verbatim; test understanding.",
@@ -510,14 +522,15 @@
       "- No duplicate questions, no trick questions, no 'all of the above'.",
       difficulty ? `- Target difficulty: ${difficulty}.` : "",
       "",
-      'Reply with ONLY this JSON object:',
-      '{"questions":[{"type":"mcq","question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."},{"type":"short","question":"...","answer":"...","explanation":"..."}]}',
+      "Reply with ONLY this JSON object:",
+      exam
+        ? '{"questions":[{"type":"mcq","question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."}]}'
+        : '{"questions":[{"type":"mcq","question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."},{"type":"short","question":"...","answer":"...","explanation":"..."}]}',
       "",
       "STUDY DOCUMENT:",
       document,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ];
+    return lines.filter(Boolean).join("\n");
   }
 
   function normaliseQuestions(raw, count) {
@@ -565,15 +578,23 @@
   /**
    * @returns {Promise<Array<object>>}
    */
-  async function generateQuestions({ apiKey, document, count = 10, difficulty = "", signal, onProgress }) {
+  async function generateQuestions({ apiKey, document, count = 10, difficulty = "", signal, onProgress, sourceName, sourceCount, partLabel, style = "" }) {
     const trimmed = String(document).slice(0, MAX_QUIZ_SOURCE_CHARS + 2000);
-    const askCount = Math.min(Math.max(count, 4), 25);
+    // Quotas can legitimately be small (one resource of a large kit), so only
+    // clamp to the API's sane range instead of forcing a minimum of four.
+    const askCount = Math.max(1, Math.min(Math.floor(count) || 1, 25));
 
-    if (onProgress) onProgress(`Writing ${askCount} practice questions…`);
+    if (onProgress) {
+      onProgress(
+        partLabel
+          ? `Writing ${askCount} question(s) for ${partLabel}…`
+          : `Writing ${askCount} practice questions…`,
+      );
+    }
 
     const { content } = await chat({
       apiKey,
-      prompt: buildQuestionsPrompt(trimmed, askCount, difficulty),
+      prompt: buildQuestionsPrompt(trimmed, askCount, difficulty, { sourceName, sourceCount, style }),
       maxTokens: MAX_TOKENS,
       temperature: 0.5,
       signal,
@@ -583,11 +604,197 @@
     });
 
     const parsed = parseJsonLoose(content);
-    const questions = normaliseQuestions(parsed, askCount);
+    let questions = normaliseQuestions(parsed, askCount);
+    if (style === "exam") {
+      // A timed exam is marked automatically, so only keep choice questions.
+      questions = questions.filter((question) => question.type === "mcq" && question.options.length >= 2);
+    }
     if (!questions.length) {
-      throw new Error("The model did not return usable questions. Try again or rephrase the source.");
+      throw new Error("The model did not return usable questions for this material.");
     }
     return questions;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Flashcards
+   * ------------------------------------------------------------------ */
+
+  function buildFlashcardsPrompt(document, count, options = {}) {
+    const single = Boolean(options.sourceName);
+    return [
+      single
+        ? `You are writing revision flashcards for one resource of a study kit: "${options.sourceName}".`
+        : "You are writing revision flashcards for a student, based only on the study document below.",
+      `Write exactly ${count} flashcard(s) from this material.`,
+      "Each card has a short prompt on the front and a concise answer on the back.",
+      "Rules:",
+      "- One fact, definition, process or relationship per card — no compound cards.",
+      "- The front must be a question or a cue that stands on its own, not a sentence copied from the document; never use fill-in-the-blank with a single blanked word.",
+      "- The back must be a complete, self-contained answer of one or two sentences.",
+      "- No yes/no cards, no trivia, no duplicates, no 'all of the above'.",
+      "- Prefer the ideas a student must be able to recall under exam pressure.",
+      count === 1 ? "- One card only: choose the single most important idea." : "",
+      "",
+      "Reply with ONLY this JSON object:",
+      '{"cards":[{"front":"...","back":"..."}]}',
+      "",
+      "STUDY DOCUMENT:",
+      document,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function normaliseFlashcards(raw, count) {
+    if (!raw || !Array.isArray(raw.cards)) return [];
+    const cards = [];
+    for (const item of raw.cards) {
+      if (!item || typeof item !== "object") continue;
+      const front = typeof item.front === "string" ? item.front.trim() : "";
+      const back = typeof item.back === "string" ? item.back.trim() : "";
+      if (!front || !back) continue;
+      cards.push({ front, back });
+      if (cards.length >= count) break;
+    }
+    return cards;
+  }
+
+  async function generateFlashcards({ apiKey, document, count = 10, signal, onProgress, sourceName, sourceCount, partLabel }) {
+    const trimmed = String(document).slice(0, MAX_QUIZ_SOURCE_CHARS + 2000);
+    const askCount = Math.max(1, Math.min(Math.floor(count) || 1, 40));
+
+    if (onProgress) {
+      onProgress(
+        partLabel ? `Writing ${askCount} flashcard(s) for ${partLabel}…` : `Writing ${askCount} flashcards…`,
+      );
+    }
+
+    const { content } = await chat({
+      apiKey,
+      prompt: buildFlashcardsPrompt(trimmed, askCount, { sourceName, sourceCount }),
+      maxTokens: MAX_TOKENS,
+      temperature: 0.4,
+      signal,
+      onRetry: (error, attempt) => {
+        if (onProgress) onProgress(`NIM busy (${error.status || "network"}); retry ${attempt}/${MAX_RETRIES}…`);
+      },
+    });
+
+    const cards = normaliseFlashcards(parseJsonLoose(content), askCount);
+    if (!cards.length) {
+      throw new Error("The model did not return usable flashcards for this material.");
+    }
+    return cards;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Quiz planning
+   *
+   * A single prompt containing every document makes models drift towards one
+   * resource. Instead the kit's questions are allocated per resource, each is
+   * generated in its own request, and the results are merged.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Split `count` questions across `sources` ({ id, name, length }).
+   *
+   * Every resource gets at least one question when there are enough to go
+   * round; the rest are shared in proportion to document length using the
+   * largest-remainder method, so quotas always add up to `count`.
+   */
+  function planQuizAllocation(sources, count) {
+    const list = (sources || [])
+      .filter((source) => source && source.id)
+      .map((source) => ({
+        id: source.id,
+        name: source.name || "Untitled resource",
+        weight: Math.max(1, Number(source.length) || 0),
+      }));
+
+    // Callers clamp to their own maximum (25 questions, 40 cards or exam
+    // questions); this is only a safety ceiling.
+    const total = Math.max(1, Math.min(Math.floor(count) || 1, 60));
+    if (!list.length) return [];
+
+    // Fewer questions than resources: give them to the largest documents.
+    if (total < list.length) {
+      return [...list]
+        .sort((a, b) => b.weight - a.weight)
+        .slice(0, total)
+        .map((source) => ({ id: source.id, name: source.name, quota: 1 }));
+    }
+
+    const entries = list.map((source) => ({ ...source, quota: 1 }));
+    let remaining = total - entries.length;
+    const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0);
+
+    if (remaining > 0) {
+      const shares = entries.map((entry) => {
+        const exact = (entry.weight / totalWeight) * remaining;
+        return { entry, base: Math.floor(exact), rest: exact - Math.floor(exact) };
+      });
+
+      for (const share of shares) share.entry.quota += share.base;
+      remaining -= shares.reduce((sum, share) => sum + share.base, 0);
+
+      // Hand out any rounding leftovers to the largest fractional parts.
+      for (const share of [...shares].sort((a, b) => b.rest - a.rest)) {
+        if (remaining <= 0) break;
+        share.entry.quota += 1;
+        remaining -= 1;
+      }
+    }
+
+    return entries
+      .sort((a, b) => b.quota - a.quota)
+      .map((entry) => ({ id: entry.id, name: entry.name, quota: entry.quota }));
+  }
+
+  /** Normalised key used to spot near-identical questions across resources. */
+  function questionKey(question) {
+    return String(question || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /** Drop items whose key repeats one already kept (per resource, then merged). */
+  function dedupeBy(items, keyOf) {
+    const seen = new Set();
+    const kept = [];
+    for (const item of items || []) {
+      const key = questionKey(keyOf(item));
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      kept.push(item);
+    }
+    return kept;
+  }
+
+  function dedupeQuestions(items) {
+    return dedupeBy(items, (item) => item && item.question);
+  }
+
+  function dedupeFlashcards(cards) {
+    return dedupeBy(cards, (card) => card && card.front);
+  }
+
+  /** Round-robin merge so the set is not ordered by resource. */
+  function interleaveQuestionGroups(groups) {
+    const buckets = (groups || []).map((group) => [...(group || [])]);
+    const merged = [];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const bucket of buckets) {
+        if (bucket.length) {
+          merged.push(bucket.shift());
+          added = true;
+        }
+      }
+    }
+    return merged;
   }
 
   Symus.ai = {
@@ -609,5 +816,13 @@
     generateDocument,
     generateQuestions,
     normaliseQuestions,
+    generateFlashcards,
+    normaliseFlashcards,
+    buildFlashcardsPrompt,
+    dedupeFlashcards,
+    planQuizAllocation,
+    dedupeQuestions,
+    interleaveQuestionGroups,
+    questionKey,
   };
 })((window.Symus = window.Symus || {}));

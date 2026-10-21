@@ -70,6 +70,8 @@
         createdAt: str(item.createdAt, now()),
         updatedAt: str(item.updatedAt, now()),
         quiz: normaliseQuiz(item.quiz),
+        flashcards: normaliseFlashcards(item.flashcards),
+        exam: normaliseExam(item.exam),
       }));
 
     const kitIds = new Set(next.kits.map((k) => k.id));
@@ -124,18 +126,98 @@
     };
   }
 
+  function normaliseCoverage(raw) {
+    return arr(raw)
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => ({
+        id: str(entry.id),
+        name: str(entry.name),
+        requested: Number.isFinite(entry.requested) ? entry.requested : 0,
+        produced: Number.isFinite(entry.produced) ? entry.produced : 0,
+      }));
+  }
+
+  function normaliseFailures(raw) {
+    return arr(raw)
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => ({ name: str(entry.name), message: str(entry.message) }));
+  }
+
+  function normaliseSources(raw) {
+    return arr(raw).filter((name) => typeof name === "string");
+  }
+
+  /** One question: used by practice questions and by the timed exam. */
+  function normaliseQuestion(item) {
+    return {
+      type: item.type === "mcq" ? "mcq" : "short",
+      question: str(item.question),
+      options: arr(item.options).map((option) => str(option)),
+      answerIndex: Number.isInteger(item.answerIndex) ? item.answerIndex : 0,
+      answer: str(item.answer),
+      explanation: str(item.explanation),
+    };
+  }
+
+  function normaliseFlashcards(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const items = arr(raw.items)
+      .filter((card) => card && typeof card === "object" && str(card.front) && str(card.back))
+      .map((card) => ({
+        front: str(card.front),
+        back: str(card.back),
+        // Which resource the card came from, for the deck's source label.
+        source: str(card.source),
+      }));
+    if (!items.length) return null;
+    return {
+      generatedAt: str(raw.generatedAt),
+      items,
+      sourceCount: Number.isFinite(raw.sourceCount) ? raw.sourceCount : 0,
+      sourceNames: normaliseSources(raw.sourceNames),
+      coverage: normaliseCoverage(raw.coverage),
+      failures: normaliseFailures(raw.failures),
+    };
+  }
+
+  function normaliseExamAttempt(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      correct: Number.isFinite(raw.correct) ? raw.correct : 0,
+      total: Number.isFinite(raw.total) ? raw.total : 0,
+      takenAt: str(raw.takenAt),
+      secondsUsed: Number.isFinite(raw.secondsUsed) ? raw.secondsUsed : 0,
+    };
+  }
+
+  function normaliseExam(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const items = arr(raw.items)
+      .filter((item) => item && typeof item === "object" && str(item.question))
+      .map(normaliseQuestion);
+    if (!items.length) return null;
+    const minutes = Number(raw.durationMinutes);
+    // Exams are multiple choice so they can be marked automatically; a paper
+    // with no usable choice questions is not an exam.
+    const choices = items.filter((item) => item.type === "mcq" && item.options.length >= 2);
+    if (!choices.length) return null;
+    return {
+      generatedAt: str(raw.generatedAt),
+      items: choices,
+      durationMinutes: Number.isFinite(minutes) ? Math.min(180, Math.max(1, Math.round(minutes))) : 15,
+      sourceCount: Number.isFinite(raw.sourceCount) ? raw.sourceCount : 0,
+      sourceNames: normaliseSources(raw.sourceNames),
+      coverage: normaliseCoverage(raw.coverage),
+      failures: normaliseFailures(raw.failures),
+      lastAttempt: normaliseExamAttempt(raw.lastAttempt),
+    };
+  }
+
   function normaliseQuiz(raw) {
     if (!raw || typeof raw !== "object") return null;
     const items = arr(raw.items)
       .filter((item) => item && typeof item === "object" && str(item.question))
-      .map((item) => ({
-        type: item.type === "mcq" ? "mcq" : "short",
-        question: str(item.question),
-        options: arr(item.options).map((option) => str(option)),
-        answerIndex: Number.isInteger(item.answerIndex) ? item.answerIndex : 0,
-        answer: str(item.answer),
-        explanation: str(item.explanation),
-      }));
+      .map(normaliseQuestion);
     if (!items.length) return null;
     return {
       generatedAt: str(raw.generatedAt),
@@ -143,7 +225,10 @@
       // Which resources the set was written from, so the UI can warn when a
       // newer document is not covered yet.
       sourceCount: Number.isFinite(raw.sourceCount) ? raw.sourceCount : 0,
-      sourceNames: arr(raw.sourceNames).filter((name) => typeof name === "string"),
+      sourceNames: normaliseSources(raw.sourceNames),
+      // Per-resource quota and output, so coverage is visible in the UI.
+      coverage: normaliseCoverage(raw.coverage),
+      failures: normaliseFailures(raw.failures),
       truncated: raw.truncated === true,
     };
   }
@@ -342,6 +427,38 @@
     return kit;
   }
 
+  function setKitFlashcards(kitId, flashcards) {
+    const kit = getKit(kitId);
+    if (!kit) return null;
+    kit.flashcards = normaliseFlashcards(flashcards);
+    kit.updatedAt = now();
+    touchKit(kitId);
+    commit();
+    return kit.flashcards;
+  }
+
+  function setKitExam(kitId, exam) {
+    const kit = getKit(kitId);
+    if (!kit) return null;
+    kit.exam = normaliseExam(exam);
+    kit.updatedAt = now();
+    touchKit(kitId);
+    commit();
+    return kit.exam;
+  }
+
+  /** Record a finished exam attempt so the tab can show recent performance. */
+  function setKitExamAttempt(kitId, attempt) {
+    const kit = getKit(kitId);
+    const next = normaliseExamAttempt(attempt);
+    if (!kit || !kit.exam || !next) return null;
+    kit.exam.lastAttempt = next;
+    kit.updatedAt = now();
+    touchKit(kitId);
+    commit();
+    return next;
+  }
+
   function deleteResource(id) {
     const index = state.resources.findIndex((item) => item.id === id);
     if (index < 0) return false;
@@ -458,6 +575,9 @@
     updateResource,
     setResourceDocument,
     setKitQuiz,
+    setKitFlashcards,
+    setKitExam,
+    setKitExamAttempt,
     deleteResource,
     setApiKey,
     setSettings,

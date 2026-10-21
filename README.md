@@ -62,13 +62,15 @@ hard-reload with Ctrl/Cmd-Shift-R. When releasing, bump the token in both places
 
 ### Study kit tabs
 
-Each study kit is split into three tabs (each with its own URL, so back/forward and bookmarks work):
+Each study kit is split into five tabs (each with its own URL, so back/forward and bookmarks work):
 
 | Tab | URL | What it shows |
 | --- | --- | --- |
 | **Resources** | `#/kit/<id>` | Add PDFs/pasted text and see every resource with its status. |
 | **Study documents** | `#/kit/<id>/documents` | Read the generated document for any resource in the kit, with copy/download. |
 | **Practice questions** | `#/kit/<id>/questions` | Questions written from **all** documents in the kit. |
+| **Flashcards** | `#/kit/<id>/flashcards` | A revision deck written from **all** documents, with a card player. |
+| **Practice exam** | `#/kit/<id>/exam` | A timed, auto-marked multiple-choice paper from **all** documents. |
 
 ### Study kits and resources
 
@@ -108,17 +110,57 @@ sections, each of which becomes part of one complete Markdown study document.
 
 ### Practice questions (per study kit)
 
-Questions belong to the whole **study kit**, not to a single resource: every study document in the kit
-is combined and sent to the model together, so the set tests the kit as a whole.
+Questions belong to the whole **study kit**: every study document in it is covered.
 
-- Choose 5–25 questions and a difficulty; the model writes a mix of multiple-choice and short-answer
-  questions and is told to cover every resource in proportion to its size.
-- Very large kits are sampled rather than cut off at the front: each resource contributes a
-  proportional slice (up to ~60 000 characters in total), and the questions tab says so.
-- The tab records which resources the current set was built from and warns when a newer document is
-  not covered yet — regenerate to include it.
+A single prompt containing every document does not work — the model drifts towards whichever resource
+is most salient and effectively ignores the rest. So the kit's questions are **allocated per
+resource**:
+
+1. Each resource gets a quota: one question minimum, and the remainder shared in proportion to
+   document length (largest-remainder rounding, so quotas always add up to the requested count).
+   With fewer questions than resources, the largest documents get them.
+2. Each resource is generated **in its own request**, prompted with only that document and told
+   exactly how many questions to write about it.
+3. Results are interleaved (so the set is not blocked by resource) and de-duplicated.
+4. If the model returns fewer than requested, or a pass fails, one bounded top-up pass asks the
+   resources that did produce questions for the shortfall.
+
+Consequences you will see in the questions tab:
+
+- A **coverage chip per resource** showing how many questions it produced.
+- Specific warnings when a resource produced none, when a newer document is not covered yet,
+  and when a resource's request failed (the other resources' questions are still saved).
+- Progress reports which resource is being written and how many questions it is asked for.
 - Answer MCQs inline (immediate right/wrong marking plus an explanation), reveal model answers for
   short questions, and download the set as Markdown.
+
+### Flashcards (per study kit)
+
+A deck of revision cards, written the same way: **allocated per resource**, one request each, then
+merged, de-duplicated by prompt and interleaved so the deck is not grouped by resource.
+
+- Each card has a one-line **prompt** and a short, self-contained **answer**; one fact per card.
+- Choose 10, 20, 30 or 40 cards.
+- The player shows one card at a time: click it (or press **Space**) to reveal the answer, **←/→** to
+  move through the deck, **Got it** / **Still learning** to rate a card as you go.
+- **Shuffle** randomises the order, **Restart** returns to the first card, **Browse all** switches to a
+  plain list, and the deck can be downloaded as Markdown.
+- Progress (card *n* of *N*, cards known, cards to review) is shown above the card.
+
+### Practice exam (per study kit)
+
+The same material as the practice questions, but as a **timed paper**:
+
+- **Multiple choice only**, so the paper can be marked automatically — no short answers.
+- Choose 10–30 questions and a time limit, or let it pick about 1¼ minutes per question (minimum 5,
+  rounded to 5).
+- **Start exam** begins a countdown. Questions show no feedback while the exam runs; answers are
+  recorded as you click, and the header tracks how many you have answered.
+- Submit early (with a confirmation if questions are unanswered) or let the clock auto-submit at zero.
+  The clock keeps running if you switch tabs; reloading the page abandons the run.
+- The result screen shows the score, percentage, time used, and a full review with the correct answer
+  highlighted plus the explanation. **Retake** reuses the questions with a fresh clock; the last score
+  is remembered on the exam's front page.
 
 ## Choosing the model
 
@@ -196,7 +238,7 @@ src/*.js              application code executed by ARCH.js
 | `src/store.js` | localStorage data model: classes, kits, resources, settings, backup/restore. |
 | `src/markdown.js` | Small, safe Markdown renderer (HTML escaped, safe links only). |
 | `src/ocr.js` | PDF.js text-layer extraction, Tesseract OCR of selected pages, text reconstruction. |
-| `src/ai.js` | NIM client: gap analysis, document generation, question generation, chunking, retries. |
+| `src/ai.js` | NIM client: gap analysis, document generation, questions, flashcards, exam papers, allocation, retries. |
 | `src/jobs.js` | Sequential job queue and the extraction pipeline. |
 | `src/ui.js` | Dashboard, kit and resource views, modals, toasts, job bar. |
 | `src/main.js` | Boot. |
@@ -246,6 +288,10 @@ The Worker never stores or logs the key — it forwards the caller's `Authorizat
 - Long resources are split into sections, so cross-section connections can be weaker. If a section hits
   the output-token limit the resource status says which part may be short.
 - AI output can be wrong or can miss nuance: check it against the source before revising from it.
+- Kits with many resources mean one model request per resource, so generating a large set takes
+  proportionally longer — a 40-card deck or a 30-question exam across five resources is ten requests.
+- An exam run lives in memory: reloading the page or closing the tab abandons it (the saved paper and
+  last score survive).
 - Available models depend on your NVIDIA account and the Worker's family filter. If one is missing,
   check **Settings → Model → Load available models** and `SYMUS_MODEL_FILTER` on the Worker.
 - Not exhaustively tested in every browser; it relies on modern ES2022 features.
