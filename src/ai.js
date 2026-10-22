@@ -7,10 +7,12 @@
  *
  * Model: nvidia/nemotron-3.5-lightning-30b-a3b
  *
- * Three capabilities:
+ * Capabilities:
  *   analyseGaps()        — does the PDF text layer miss content? which pages?
  *   generateDocument()   — condense source text into summary study notes
  *   generateQuestions()  — practice questions from that document
+ *   markShortAnswer()    — mark a written answer with strengths and gaps
+ *   generateFlashcards() — revision cards in the chosen style
  */
 (function (Symus) {
   "use strict";
@@ -668,6 +670,7 @@
       count === 1 ? "- One question only: pick the single most important idea in the material." : "",
       "Rules:",
       "- Every question must be answerable from the document alone.",
+      "- Never refer to the source itself: no \"the document\", \"the notes\", \"the text\", \"the passage\", \"the material\", \"the article\", \"as shown above\" or similar. The student sees only the question, so it must stand alone and say what it is about.",
       "- Do not copy sentences verbatim; test understanding.",
       "- Distractors must be plausible and clearly wrong to someone who knows the material.",
       "- No duplicate questions, no trick questions, no 'all of the above'.",
@@ -764,6 +767,91 @@
       throw new Error("The model did not return usable questions for this material.");
     }
     return questions;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Marking short answers
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Ask the model to mark one written answer against the question's model
+   * answer. Feedback is split so the UI can show what was good and what to
+   * improve, which is more useful to a student than a bare score.
+   */
+  function buildMarkingPrompt({ question, modelAnswer, answer, explanation, sourceName }) {
+    return [
+      sourceName
+        ? `You are marking one short written answer for a student revising "${sourceName}".`
+        : "You are marking one short written answer for a student.",
+      "",
+      "QUESTION:",
+      question,
+      "",
+      "MODEL ANSWER:",
+      modelAnswer,
+      explanation ? `\nWHY (the reasoning the model answer is based on):\n${explanation}` : "",
+      "",
+      "STUDENT ANSWER:",
+      answer,
+      "",
+      "How to mark:",
+      "- Judge the meaning, not the wording. A different phrasing that makes the same point is correct.",
+      "- Be fair but honest: missing key ideas, wrong terminology or contradictions cost marks.",
+      "- Never mention the source material. The student cannot see any document, so do not refer to \"the document\", \"the notes\" or \"the text\".",
+      "- \"good\" lists what the student got right, quoting or paraphrasing their answer where useful.",
+      "- \"improve\" lists specific, actionable gaps or corrections — the ideas they should add or fix.",
+      "- If the answer is empty or irrelevant, say so plainly and set score to 0.",
+      "",
+      "Reply with ONLY this JSON object:",
+      '{"verdict":"correct|partly|incorrect","score":0-100,"good":["..."],"improve":["..."],"summary":"one sentence"}',
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function normaliseMarking(raw) {
+    const data = raw && typeof raw === "object" ? raw : {};
+    const verdicts = ["correct", "partly", "incorrect"];
+    const score = Number.isFinite(Number(data.score)) ? Math.max(0, Math.min(100, Math.round(Number(data.score)))) : 0;
+    let verdict = verdicts.includes(String(data.verdict || "").toLowerCase()) ? String(data.verdict).toLowerCase() : "";
+    if (!verdict) verdict = score >= 75 ? "correct" : score >= 40 ? "partly" : "incorrect";
+
+    const list = (value) =>
+      (Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
+        .filter((entry) => typeof entry === "string" && entry.trim())
+        .map((entry) => entry.trim())
+        .slice(0, 5);
+
+    return {
+      verdict,
+      score,
+      good: list(data.good),
+      improve: list(data.improve),
+      summary: typeof data.summary === "string" ? data.summary.trim() : "",
+    };
+  }
+
+  /**
+   * @returns {Promise<{verdict: string, score: number, good: string[], improve: string[], summary: string}>}
+   */
+  async function markShortAnswer({ apiKey, question, modelAnswer, answer, explanation = "", sourceName = "", signal }) {
+    const { content } = await chat({
+      apiKey,
+      prompt: buildMarkingPrompt({ question, modelAnswer, answer, explanation, sourceName }),
+      maxTokens: 900,
+      temperature: 0.2,
+      signal,
+    });
+
+    const parsed = parseJsonLoose(content);
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("The model could not mark this answer.");
+    }
+    const marking = normaliseMarking(parsed);
+    if (!marking.good.length && !marking.improve.length && !marking.summary) {
+      throw new Error("The model could not mark this answer.");
+    }
+    return marking;
   }
 
   /* ------------------------------------------------------------------ *
@@ -994,6 +1082,9 @@
     readEventStream,
     generateQuestions,
     normaliseQuestions,
+    buildMarkingPrompt,
+    normaliseMarking,
+    markShortAnswer,
     generateFlashcards,
     normaliseFlashcards,
     buildFlashcardsPrompt,

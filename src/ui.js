@@ -37,7 +37,9 @@
   let query = "";
   let editingDocId = null;
   let docViewId = null;
-  let quizState = { selected: {}, revealed: {} };
+  // Practice-question progress, one question at a time. Answers lock once given;
+  // `generation` invalidates textarea drafts when the set restarts.
+  let quizState = { generation: 0, index: 0, answers: {}, markingIndex: null, markingError: "", done: false };
   // Flashcard deck position, kept per kit while the tab is open.
   let flashState = { kitId: null, index: 0, flipped: false, order: null, known: {}, again: {}, shuffled: false };
   // Timed exam session. Lives in memory only: reloading the page abandons a run.
@@ -255,7 +257,7 @@
         // Fresh kit: reset in-page interactions so answers and the document
         // picker do not leak between kits.
         lastQuizKey = route.id;
-        quizState = { selected: {}, revealed: {} };
+        quizState = freshQuizState();
         docViewId = null;
         resetDeck(route.id);
         if (examState.kitId !== route.id) resetExam(route.id);
@@ -761,64 +763,308 @@
       </section>`;
   }
 
+  /**
+   * Practice questions run one at a time: answer, get marked, move on. Once an
+   * answer is given it is locked, so the set can be scored honestly.
+   */
+  function freshQuizState() {
+    return {
+      generation: (quizState.generation || 0) + 1,
+      index: 0,
+      answers: {},
+      markingIndex: null,
+      markingError: "",
+      done: false,
+    };
+  }
+
+  /** True when an answer counts towards the score. */
+  function answerWasCorrect(answer) {
+    if (!answer) return false;
+    if (answer.kind === "mcq") return Boolean(answer.correct);
+    return answer.verdict === "correct" || (answer.score || 0) >= 70;
+  }
+
+  function quizTally(kit) {
+    const items = (kit.quiz && kit.quiz.items) || [];
+    let answered = 0;
+    let correct = 0;
+    items.forEach((item, index) => {
+      const answer = quizState.answers[index];
+      if (!answer) return;
+      answered += 1;
+      if (answerWasCorrect(answer)) correct += 1;
+    });
+    return {
+      items,
+      total: items.length,
+      answered,
+      correct,
+      percent: items.length ? Math.round((correct / items.length) * 100) : 0,
+    };
+  }
+
   function renderKitQuiz(kit) {
     const quiz = kit.quiz;
     if (!quiz) {
       return `<p class="muted small">No questions yet. Generate a set and they will be saved with this study kit.</p>`;
     }
+    if (!quiz.items.length) {
+      return `<p class="muted small">This set has no questions. Regenerate to write some.</p>`;
+    }
 
-    const state = quizState;
+    if (quizState.done) return renderQuizSummary(kit);
+
     const items = quiz.items;
-    const answered = Object.keys(state.selected).length + Object.keys(state.revealed).length;
+    const index = Math.min(Math.max(0, quizState.index), items.length - 1);
+    const item = items[index];
+    const answer = quizState.answers[index];
+    const tally = quizTally(kit);
+    const marking = quizState.markingIndex === index;
+    const position = items.length ? Math.round(((tally.answered) / items.length) * 100) : 0;
 
     return `
       <div class="quiz-meta">
-        <span class="muted tiny">${plural(items.length, "question")} · generated ${esc(relativeTime(quiz.generatedAt))} · ${answered} answered</span>
+        <span class="muted tiny">Question ${index + 1} of ${items.length} · generated ${esc(
+          relativeTime(quiz.generatedAt),
+        )}</span>
+        <span class="muted tiny">${tally.correct}/${items.length} correct so far</span>
       </div>
-      <ol class="quiz">
-        ${items
-          .map((item, index) => {
-            if (item.type === "mcq") {
-              const selected = state.selected[index];
-              return `
-                <li class="q">
-                  <p class="q-text">${esc(item.question)}</p>
-                  <div class="options">
-                    ${item.options
-                      .map((option, optionIndex) => {
-                        let cls = "option";
-                        if (selected !== undefined) {
-                          if (optionIndex === item.answerIndex) cls += " correct";
-                          else if (optionIndex === selected) cls += " wrong";
-                        }
-                        return `<button class="${cls}" data-action="answer-mcq" data-q="${index}" data-opt="${optionIndex}">
-                          <span class="opt-letter">${String.fromCharCode(65 + optionIndex)}</span>
-                          <span>${esc(option)}</span>
-                        </button>`;
-                      })
-                      .join("")}
-                  </div>
-                  ${
-                    selected !== undefined && item.explanation
-                      ? `<p class="explanation">${esc(item.explanation)}</p>`
-                      : ""
-                  }
-                </li>`;
-            }
-            const revealed = state.revealed[index];
-            return `
-              <li class="q">
-                <p class="q-text">${esc(item.question)}</p>
+      <div class="result-meter quiz-progress"><span style="width:${position}%"></span></div>
+      ${item.type === "mcq" ? renderQuizMcq(item, index, answer) : renderQuizShort(item, index, answer, marking)}
+      <div class="quiz-foot">
+        ${
+          answer
+            ? `<button class="btn small primary" data-action="next-question">${
+                index >= items.length - 1 ? "See results" : "Next question"
+              }</button>`
+            : `<span class="muted tiny">${
+                item.type === "mcq"
+                  ? "Choose an answer to continue — it cannot be changed afterwards."
+                  : "Write your answer and submit it for marking, or reveal the model answer."
+              }</span>`
+        }
+      </div>`;
+  }
+
+  function renderQuizMcq(item, index, answer) {
+    const chosen = answer ? answer.chosen : undefined;
+    return `
+      <article class="quiz-card">
+        <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+        <div class="options">
+          ${item.options
+            .map((option, optionIndex) => {
+              const letter = String.fromCharCode(65 + optionIndex);
+              if (answer) {
+                let cls = "option static";
+                if (optionIndex === item.answerIndex) cls += " correct";
+                else if (optionIndex === chosen) cls += " wrong";
+                return `<span class="${cls}"><span class="opt-letter">${letter}</span><span>${esc(option)}</span></span>`;
+              }
+              return `<button class="option" data-action="answer-mcq" data-q="${index}" data-opt="${optionIndex}">
+                <span class="opt-letter">${letter}</span>
+                <span>${esc(option)}</span>
+              </button>`;
+            })
+            .join("")}
+        </div>
+        ${
+          answer
+            ? `<p class="quiz-verdict ${answer.correct ? "correct" : "incorrect"}">${
+                answer.correct ? "Correct." : "Not quite — the right answer is highlighted above."
+              }</p>
+               ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}`
+            : ""
+        }
+      </article>`;
+  }
+
+  function renderQuizShort(item, index, answer, marking) {
+    if (!answer) {
+      const draftKey = `short-${quizState.generation}-${index}`;
+      return `
+        <article class="quiz-card">
+          <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+          <div class="field">
+            <label for="short-answer">Your answer</label>
+            <textarea id="short-answer" data-draft="${draftKey}" rows="4" placeholder="Answer in your own words…" ${
+              marking ? "disabled" : ""
+            }></textarea>
+          </div>
+          ${
+            quizState.markingError
+              ? `<div class="notice error-soft">${esc(quizState.markingError)}</div>`
+              : ""
+          }
+          <div class="row tight">
+            <button class="btn small primary" data-action="mark-answer" data-q="${index}" ${
+              marking ? "disabled" : ""
+            }>${marking ? "Marking…" : "Submit for marking"}</button>
+            <button class="btn small" data-action="reveal-answer" data-q="${index}" ${
+              marking ? "disabled" : ""
+            }>Show model answer</button>
+          </div>
+          <p class="muted tiny">Your answer is marked by the model against the model answer. Once it is marked you cannot change it.</p>
+        </article>`;
+    }
+
+    const verdictLabel =
+      answer.verdict === "correct" ? "Correct" : answer.verdict === "partly" ? "Partly correct" : "Needs work";
+    const marked = !answer.skipped;
+
+    return `
+      <article class="quiz-card">
+        <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+        <div class="answer-block">
+          <span class="answer-label">Your answer</span>
+          <p>${answer.skipped || !answer.text ? `<span class="muted">Not answered — you revealed the model answer.</span>` : esc(answer.text)}</p>
+        </div>
+        ${
+          marked
+            ? `<div class="marked ${answer.verdict}">
+                 <div class="marked-head">
+                   <span class="badge ${answer.verdict === "incorrect" ? "error" : "ready"}">${verdictLabel}</span>
+                   <span class="marked-score">${answer.score}%</span>
+                 </div>
+                 ${answer.summary ? `<p class="marked-summary">${esc(answer.summary)}</p>` : ""}
+                 <div class="marked-columns">
+                   <div>
+                     <h4>What you got right</h4>
+                     ${
+                       answer.good.length
+                         ? `<ul>${answer.good.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`
+                         : `<p class="muted tiny">Nothing specific to credit this time.</p>`
+                     }
+                   </div>
+                   <div>
+                     <h4>What to improve</h4>
+                     ${
+                       answer.improve.length
+                         ? `<ul>${answer.improve.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`
+                         : `<p class="muted tiny">Nothing to fix — this answer covers the key ideas.</p>`
+                     }
+                   </div>
+                 </div>
+               </div>`
+            : ""
+        }
+        <p class="answer"><strong>Model answer:</strong> ${esc(item.answer)}</p>
+        ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}
+      </article>`;
+  }
+
+  function renderQuizSummary(kit) {
+    const tally = quizTally(kit);
+    const grade =
+      tally.percent >= 85
+        ? "Excellent"
+        : tally.percent >= 70
+          ? "Solid"
+          : tally.percent >= 50
+            ? "Getting there"
+            : "Needs work";
+    const missed = tally.total - tally.answered;
+
+    return `
+      <section class="quiz-summary">
+        <div class="result-card">
+          <span class="result-score">${tally.correct}<span class="muted">/${tally.total}</span></span>
+          <span class="result-percent">${tally.percent}%</span>
+          <span class="badge ${tally.percent >= 70 ? "ready" : "error"}">${esc(grade)}</span>
+          <span class="muted tiny">${
+            missed ? `${plural(missed, "question")} not answered` : "every question answered"
+          } · AI-marked answers count when they are fully correct</span>
+        </div>
+        <div class="result-meter"><span style="width:${tally.percent}%"></span></div>
+        <div class="row tight" style="margin-top:12px">
+          <button class="btn small" data-action="restart-quiz">Try this set again</button>
+          <button class="btn small primary" data-action="more-questions" data-id="${esc(kit.id)}">Generate more questions</button>
+        </div>
+        <h3 class="review-head">Review</h3>
+        <ol class="quiz">
+          ${tally.items
+            .map((item, index) => {
+              const answer = quizState.answers[index];
+              const ok = answerWasCorrect(answer);
+              let detail;
+              if (!answer) detail = `<span class="muted">Not answered.</span>`;
+              else if (item.type === "mcq")
+                detail = ok
+                  ? "Correct."
+                  : `Incorrect — the answer was “${esc(item.options[item.answerIndex])}”.`;
+              else if (answer.skipped) detail = "Revealed the model answer without submitting.";
+              else
+                detail = `AI marked ${answer.score}% — ${esc(
+                  answer.verdict === "correct" ? "correct" : answer.verdict === "partly" ? "partly correct" : "needs work",
+                )}.`;
+              return `<li class="q ${ok ? "q-correct" : "q-wrong"}">
+                <p class="q-text"><span class="q-number">${index + 1}</span>${esc(item.question)}</p>
+                <p class="muted tiny">${detail}</p>
                 ${
-                  revealed
-                    ? `<p class="answer"><strong>Model answer:</strong> ${esc(item.answer)}</p>
-                       ${item.explanation ? `<p class="explanation">${esc(item.explanation)}</p>` : ""}`
-                    : `<button class="btn small" data-action="reveal" data-q="${index}">Show model answer</button>`
+                  item.type === "short" && answer && !answer.skipped && answer.text
+                    ? `<p class="answer-block"><span class="answer-label">Your answer</span><span>${esc(answer.text)}</span></p>`
+                    : ""
                 }
+                <p class="muted tiny">Model answer: ${esc(item.answer || item.options[item.answerIndex])}</p>
               </li>`;
-          })
-          .join("")}
-      </ol>`;
+            })
+            .join("")}
+        </ol>
+      </section>`;
+  }
+
+  /**
+   * Mark one written practice answer with the model and lock it in. The text is
+   * read from the textarea so no keystroke tracking is needed.
+   */
+  function markShortAnswer(kit, index) {
+    const item = kit.quiz && kit.quiz.items[index];
+    if (!item || quizState.answers[index] || quizState.markingIndex !== null) return;
+
+    const field = els.view.querySelector("#short-answer");
+    const text = (field ? field.value : "").trim();
+    if (!text) {
+      toast("Write an answer first.", "error");
+      if (field) field.focus();
+      return;
+    }
+    if (!requireKey()) return;
+
+    quizState.markingIndex = index;
+    quizState.markingError = "";
+    render();
+
+    Symus.ai
+      .markShortAnswer({
+        apiKey: store.getApiKey(),
+        question: item.question,
+        modelAnswer: item.answer,
+        explanation: item.explanation,
+        answer: text,
+      })
+      .then((marking) => {
+        if (route.name !== "kit" || quizState.markingIndex !== index) return;
+        quizState.answers[index] = {
+          kind: "short",
+          text,
+          skipped: false,
+          verdict: marking.verdict,
+          score: marking.score,
+          good: marking.good,
+          improve: marking.improve,
+          summary: marking.summary,
+          correct: marking.verdict === "correct" || marking.score >= 70,
+        };
+        quizState.markingIndex = null;
+        render();
+      })
+      .catch((error) => {
+        quizState.markingIndex = null;
+        quizState.markingError = Symus.ai.describeError(error);
+        toast(quizState.markingError, "error");
+        render();
+      });
   }
 
   /* ------------------------- one-time sharing ---------------------- */
@@ -1315,6 +1561,7 @@
           </div>
           <span class="muted tiny" id="exam-answered">${answered}/${exam.items.length} answered</span>
           <button class="btn small primary" data-action="submit-exam">Submit exam</button>
+          <button class="btn small" data-action="cancel-exam">Cancel exam</button>
         </div>
         <ol class="quiz exam-questions">
           ${exam.items
@@ -1340,6 +1587,7 @@
         </ol>
         <div class="row center">
           <button class="btn primary" data-action="submit-exam">Submit exam</button>
+          <button class="btn" data-action="cancel-exam">Cancel exam</button>
         </div>
       </section>`;
   }
@@ -2295,7 +2543,7 @@
         if (!requireKey()) return false;
         const count = Number(root.querySelector("#quiz-count").value);
         const difficulty = root.querySelector("#quiz-level").value;
-        quizState = { selected: {}, revealed: {} };
+        quizState = freshQuizState();
         jobs.makeQuiz(kit, count, difficulty);
         toast("Generating practice questions…");
       },
@@ -2651,6 +2899,20 @@
         render();
         break;
       }
+      case "cancel-exam": {
+        if (examState.status !== "running") break;
+        openModal({
+          title: "Cancel this exam?",
+          body: `<p>Your answers will be discarded and nothing will be scored. The same paper can be started again from the exam tab.</p>`,
+          confirmLabel: "Cancel exam",
+          onConfirm: () => {
+            resetExam(examState.kitId);
+            render();
+            toast("Exam cancelled — nothing was scored.", "info");
+          },
+        });
+        break;
+      }
       case "submit-exam": {
         if (examState.status !== "running") break;
         const kit = store.getKit(examState.kitId);
@@ -2679,15 +2941,69 @@
         render();
         break;
       case "answer-mcq": {
+        const kit = store.getKit(route.id);
         const index = Number(actionEl.dataset.q);
-        quizState.selected[index] = Number(actionEl.dataset.opt);
+        if (!kit || !kit.quiz) break;
+        // One attempt per question: once an option is chosen it cannot change.
+        if (quizState.answers[index]) break;
+        const item = kit.quiz.items[index];
+        const chosen = Number(actionEl.dataset.opt);
+        quizState.answers[index] = {
+          kind: "mcq",
+          chosen,
+          correct: chosen === item.answerIndex,
+        };
+        quizState.markingError = "";
         render();
         break;
       }
-      case "reveal": {
+      case "mark-answer": {
+        const kit = store.getKit(route.id);
         const index = Number(actionEl.dataset.q);
-        quizState.revealed[index] = true;
+        if (!kit || !kit.quiz) break;
+        markShortAnswer(kit, index);
+        break;
+      }
+      case "reveal-answer": {
+        const kit = store.getKit(route.id);
+        const index = Number(actionEl.dataset.q);
+        if (!kit || !kit.quiz || quizState.answers[index]) break;
+        quizState.answers[index] = {
+          kind: "short",
+          text: "",
+          skipped: true,
+          verdict: "incorrect",
+          score: 0,
+          good: [],
+          improve: [],
+          summary: "",
+          correct: false,
+        };
+        quizState.markingError = "";
         render();
+        break;
+      }
+      case "next-question": {
+        const kit = store.getKit(route.id);
+        if (!kit || !kit.quiz) break;
+        if (quizState.index >= kit.quiz.items.length - 1) {
+          quizState.done = true;
+        } else {
+          quizState.index += 1;
+        }
+        quizState.markingError = "";
+        render();
+        break;
+      }
+      case "restart-quiz": {
+        quizState = freshQuizState();
+        render();
+        toast("Starting the set again.", "info");
+        break;
+      }
+      case "more-questions": {
+        const kit = store.getKit(route.id);
+        if (kit) openQuizOptions(kit.id);
         break;
       }
       default:
