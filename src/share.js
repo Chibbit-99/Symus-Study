@@ -4,8 +4,9 @@
  * A share uploads the finished study documents of a kit (never the PDFs, never
  * the API key) to the Symus Cloudflare Worker, which stores them in its
  * SHARING_KV namespace under a random id. The app hands out
- * `#/share/<id>`, and the reader's browser deletes the record from the Worker as
- * soon as the page has rendered, so a link works once.
+ * `#/share/<id>`. The recipient is offered the chance to turn the share into a
+ * kit of their own; the record is deleted from the Worker only once they do,
+ * so reading the page and cancelling leaves the link usable.
  *
  * Wire format
  *   POST   /api/shares      { name, subject, resources: [{ name, type, document }] }
@@ -131,7 +132,7 @@
     };
   }
 
-  /** Read a share. Does not consume it — the caller deletes it after rendering. */
+  /** Read a share. Does not consume it — the caller deletes it after importing. */
   async function openShare(id, { signal } = {}) {
     let response;
     try {
@@ -168,8 +169,10 @@
 
   /**
    * Delete a share — the step that makes the link one-time.
-   * Best effort: the page has already been shown, so a failure only means the
-   * record lingers until its TTL. Returns true when the Worker confirmed it.
+   *
+   * Only called after the recipient has created their own kit from it. Best
+   * effort: the import has already happened, so a failure only means the record
+   * lingers until its TTL. Returns true when the Worker confirmed it.
    */
   async function consumeShare(id) {
     try {

@@ -97,11 +97,15 @@ Any kit can be handed to someone else without an account, an API key, or a copy 
 2. The app sends the kit's finished **study documents** to the Symus Worker, which stores them in its
    `SHARING_KV` namespace under a random id and returns a link such as
    `https://chibbit-99.github.io/Symus-Study/#/share/fh3ji43a2k`.
-3. The recipient opens the link and gets a read-only page with every document in the kit, plus
-   **Copy all** and **Download .md**.
-4. **The link works once.** As soon as the page has rendered, the reader's browser sends
-   `DELETE /api/shares/<id>` and the record is removed from the Worker. Opening the link again shows
-   "This link has already been used". An unopened link expires after seven days.
+3. The recipient opens the link, sees a read-only page with every document in the kit (**Copy all** and
+   **Download .md** are there too), and is prompted to **Add this kit to my library**.
+4. Confirming creates a normal kit in their browser — one ready resource per shared document, nothing to
+   extract or OCR — which they own and can generate questions, flashcards and an exam from. Choosing a
+   name and class happens in that same dialog.
+5. **The link works once.** Only after the kit is created does the browser send
+   `DELETE /api/shares/<id>` and remove the record from the Worker. **Cancelling deletes nothing** — the
+   link stays valid so the recipient can read it first and decide. Opening a used link shows
+   "This link has already been used", and an unopened link expires after seven days.
 
 What is shared: the kit name, its subject, each resource's name and its finished study notes. What is
 never shared: your PDFs, their extracted text, your questions, flashcards, exam, settings, or API key.
@@ -257,7 +261,7 @@ The same material as the practice questions, but as a **timed paper**:
 | NVIDIA NIM API key | `localStorage` (same key), sent only with your requests |
 | Uploaded PDFs and their raw extracted text | memory only, discarded when processing ends |
 | Generated documents / questions | `localStorage` — use **Export** regularly |
-| A shared kit (study documents only) | Cloudflare KV via the Symus Worker, until the link is opened once or expires after 7 days |
+| A shared kit (study documents only) | Cloudflare KV via the Symus Worker, until someone adds it to their library or it expires after 7 days |
 
 The API key is saved in this browser so you do not have to paste it every session. Anyone with access
 to this browser profile can read it; use **Settings → Delete all data** to clear everything, and never

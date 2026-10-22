@@ -11,8 +11,9 @@
  *   POST   /api/shares      - store a one-time study-kit share (all of its study
  *                             documents) in the SHARING_KV namespace. Returns the
  *                             id the app puts in #/share/<id>.
- *   GET    /api/shares/<id> - read a share. Does not delete it: the viewer's
- *                             browser deletes it once the page has rendered.
+ *   GET    /api/shares/<id> - read a share. Does not delete it: the recipient's
+ *                             browser deletes it only after they add the kit to
+ *                             their library, so cancelling leaves the link alive.
  *   DELETE /api/shares/<id> - delete a share (one-time links).
  *
  *   POST /api/notes   - forwards a chat request to NVIDIA NIM. The caller
