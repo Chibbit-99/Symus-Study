@@ -88,6 +88,28 @@ Each study kit is split into five tabs (each with its own URL, so back/forward a
 | **Flashcards** | `#/kit/<id>/flashcards` | A revision deck written from **all** documents, with a card player. |
 | **Practice exam** | `#/kit/<id>/exam` | A timed, auto-marked multiple-choice paper from **all** documents. |
 
+### Sharing a kit with a one-time link
+
+Any kit can be handed to someone else without an account, an API key, or a copy of your library:
+
+1. **Share** on the dashboard row (or **Share kit** on the kit page) opens a dialog explaining exactly
+   what will be uploaded.
+2. The app sends the kit's finished **study documents** to the Symus Worker, which stores them in its
+   `SHARING_KV` namespace under a random id and returns a link such as
+   `https://chibbit-99.github.io/Symus-Study/#/share/fh3ji43a2k`.
+3. The recipient opens the link and gets a read-only page with every document in the kit, plus
+   **Copy all** and **Download .md**.
+4. **The link works once.** As soon as the page has rendered, the reader's browser sends
+   `DELETE /api/shares/<id>` and the record is removed from the Worker. Opening the link again shows
+   "This link has already been used". An unopened link expires after seven days.
+
+What is shared: the kit name, its subject, each resource's name and its finished study notes. What is
+never shared: your PDFs, their extracted text, your questions, flashcards, exam, settings, or API key.
+
+The backend must have a KV namespace bound as `SHARING_KV` (see [Deploying the Worker](#deploying-the-worker)).
+Without it, sharing returns a clear "Sharing is not configured on this Worker" error and everything else
+keeps working.
+
 ### Study kits and resources
 
 A resource is either a **PDF** or **pasted text**. Adding one runs the extraction pipeline:
@@ -235,13 +257,14 @@ The same material as the practice questions, but as a **timed paper**:
 | NVIDIA NIM API key | `localStorage` (same key), sent only with your requests |
 | Uploaded PDFs and their raw extracted text | memory only, discarded when processing ends |
 | Generated documents / questions | `localStorage` — use **Export** regularly |
+| A shared kit (study documents only) | Cloudflare KV via the Symus Worker, until the link is opened once or expires after 7 days |
 
 The API key is saved in this browser so you do not have to paste it every session. Anyone with access
 to this browser profile can read it; use **Settings → Delete all data** to clear everything, and never
 use a shared machine with a billable key.
 
 Note requests go to the Symus Cloudflare Worker, which forwards them to NVIDIA and does not store the
-key:
+key. Shares are the one thing the Worker does store, and only when you explicitly create one:
 
 ```
 browser → https://symus-backend.chibbit99.workers.dev/api/notes → https://integrate.api.nvidia.com/v1/chat/completions
@@ -290,9 +313,10 @@ src/*.js              application code executed by ARCH.js
 | `src/ocr.js` | PDF.js text-layer extraction, Tesseract OCR of selected pages, text reconstruction. |
 | `src/ai.js` | NIM client: gap analysis, document generation, questions, flashcards, exam papers, allocation, retries. |
 | `src/jobs.js` | Sequential job queue and the extraction pipeline. |
+| `src/share.js` | One-time kit sharing: upload, fetch and delete a share via the Worker. |
 | `src/ui.js` | Dashboard, kit and resource views, modals, toasts, job bar. |
 | `src/main.js` | Boot. |
-| `worker.js` | Cloudflare Worker proxying `/api/notes` to NVIDIA NIM. |
+| `worker.js` | Cloudflare Worker: NIM proxy, model catalogue, and one-time kit shares in KV. |
 | `wrangler.toml` | Worker configuration. |
 
 ## Deploying the Worker
@@ -310,6 +334,12 @@ compatibility_date = "2026-09-01"
 SYMUS_ORIGIN = "https://chibbit-99.github.io"
 SYMUS_MODEL_FILTER = "deepseek,step,nemotron,mistral,gemma,glm,muse"
 SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
+# One-time kit sharing. Create the namespace once:
+#   npx wrangler kv namespace create SYMUS_SHARING
+[[kv_namespaces]]
+binding = "SHARING_KV"
+id = "a82aa5164f2749c89971e089f1438e11"
 ```
 
 | Variable | Purpose |
@@ -317,6 +347,8 @@ SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
 | `SYMUS_ORIGIN` | Comma-separated allowed browser origins. Localhost on any port is always allowed. |
 | `SYMUS_MODEL_FILTER` | Substrings a model id must contain to be listed or accepted. Defaults to the seven families above. |
 | `SYMUS_MODELS` | Optional extra model ids allowed even when they match no filter substring. |
+| `SHARING_KV` (binding) | KV namespace for one-time kit shares. Missing binding → sharing returns 503 and nothing else breaks. |
+| `SYMUS_SHARE_TTL` (optional) | Share lifetime in seconds while unopened. Default `604800` (7 days), clamped to 1 minute–1 year. |
 
 Routes:
 
@@ -325,6 +357,10 @@ Routes:
 | `GET /health` | `{ "ok": true }` |
 | `GET /api/models` | Requires `Authorization: Bearer <NVIDIA key>`. Proxies NVIDIA's `/v1/models`, filters to the allowed families and returns `{ models: [{ id, ownedBy }], filter, count }`. |
 | `POST /api/notes` | Chat completion. Only known fields (`model`, `messages`, `max_tokens`, `temperature`, `top_p`, `stream`, `chat_template_kwargs.enable_thinking`) are forwarded, bodies are capped at 1 MB, roles and token counts are validated, and the model must match the family filter. With `{"stream": true}` the upstream server-sent events are piped back as `text/event-stream`. |
+
+| `POST /api/shares` | Store a one-time share: `{name, subject, resources:[{name,type,document}]}` → `{id, expiresAt}`. No API key needed; bodies are capped at 900 kB, 40 resources, 400 000 characters per document. |
+| `GET /api/shares/<id>` | Read a share (it is not deleted on read). `404` once it has been used or expired. |
+| `DELETE /api/shares/<id>` | Delete a share. Idempotent — deleting an already-gone share still returns `200`. |
 
 The Worker never stores or logs the key — it forwards the caller's `Authorization` header.
 

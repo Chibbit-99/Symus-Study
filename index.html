@@ -403,6 +403,17 @@
   .doc-item .res-icon{width:27px;height:27px;font-size:.55rem}
   @media (max-width:860px){ .doc-layout{grid-template-columns:1fr} .doc-side{order:-1} }
 
+  /* one-time sharing ----------------------------------------------- */
+  .share-link{display:flex;gap:8px;align-items:center;margin:12px 0}
+  .share-link input{
+    flex:1;min-width:0;font:.82rem ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:var(--panel-2);border:1px solid var(--line-2);
+  }
+  .share-docs{display:grid;gap:14px}
+  .share-docs .panel-head{align-items:flex-start}
+  .share-docs .panel-head h2{font-size:.95rem;overflow-wrap:anywhere}
+  .share-docs .res-icon{width:30px;height:30px;font-size:.56rem}
+
   /* live document (streaming) --------------------------------------- */
   .live-doc-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
   .live-dot{
@@ -591,13 +602,14 @@
       done = true;
       console.warn("[Symus Study] " + reason + "; loading the project files directly.");
       [
-        "./src/store.js?v=2026-10-22d",
-        "./src/markdown.js?v=2026-10-22d",
-        "./src/ocr.js?v=2026-10-22d",
-        "./src/ai.js?v=2026-10-22d",
-        "./src/jobs.js?v=2026-10-22d",
-        "./src/ui.js?v=2026-10-22d",
-        "./src/main.js?v=2026-10-22d",
+        "./src/store.js?v=2026-10-22e",
+        "./src/markdown.js?v=2026-10-22e",
+        "./src/ocr.js?v=2026-10-22e",
+        "./src/ai.js?v=2026-10-22e",
+        "./src/jobs.js?v=2026-10-22e",
+        "./src/share.js?v=2026-10-22e",
+        "./src/ui.js?v=2026-10-22e",
+        "./src/main.js?v=2026-10-22e",
       ].forEach(function (src) {
         var script = document.createElement("script");
         script.src = src;
