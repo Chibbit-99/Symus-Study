@@ -200,8 +200,18 @@ Consequences you will see in the questions tab:
 - Specific warnings when a resource produced none, when a newer document is not covered yet,
   and when a resource's request failed (the other resources' questions are still saved).
 - Progress reports which resource is being written and how many questions it is asked for.
-- Answer MCQs inline (immediate right/wrong marking plus an explanation), reveal model answers for
-  short questions, and download the set as Markdown.
+- Questions **never mention the source** (`the document`, `the notes`, `as shown above`, …) — each one
+  is written to stand alone, so it reads like a real exam question rather than a pointer back to notes.
+- Questions are answered **one at a time**: question *n* of *N* with a progress bar, and no later
+  question is visible until you move on.
+- An answer locks once you give it — a chosen option cannot be changed, and a written answer cannot be
+  edited after it is marked. **Next question** moves on; the last one reveals the results.
+- **Short answers are marked by the model**: you type a response, submit it, and get a verdict
+  (correct / partly correct / needs work), a percentage, what you got right, what to improve, and the
+  model answer. **Show model answer** gives up without AI marking.
+- The final screen shows an accuracy score (`correct/N`, percentage and a grade), a review of every
+  question, **Try this set again**, and **Generate more questions** (which opens the options dialog).
+- The set can always be downloaded as Markdown.
 
 ### Flashcards (per study kit)
 
@@ -232,6 +242,11 @@ The same material as the practice questions, but as a **timed paper**:
   rounded to 5).
 - **Start exam** begins a countdown. Questions show no feedback while the exam runs; answers are
   recorded as you click, and the header tracks how many you have answered.
+- The whole paper is laid out at once, **one question after another** like a real exam — every
+  question is visible and you can move back and forth before submitting. Questions never refer to the
+  study document itself.
+- **Cancel exam** abandons the run from the header or the foot of the page (after a confirmation):
+  answers are discarded, nothing is scored, and the same paper can be started again.
 - Submit early (with a confirmation if questions are unanswered) or let the clock auto-submit at zero.
   The clock keeps running if you switch tabs; reloading the page abandons the run.
 - The result screen shows the score, percentage, time used, and a full review with the correct answer
