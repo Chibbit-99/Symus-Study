@@ -10,3 +10,9 @@ SYMUS_ORIGIN = "https://chibbit-99.github.io"
 SYMUS_MODEL_FILTER = "deepseek,step,nemotron,mistral,gemma,glm,muse"
 # Optional extra ids allowed even if they match no filter substring.
 SYMUS_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
+# One-time study-kit sharing. The Worker writes a share here and the app
+# deletes it as soon as the recipient opens the link.
+[[kv_namespaces]]
+binding = "SHARING_KV"
+id = "a82aa5164f2749c89971e089f1438e11"

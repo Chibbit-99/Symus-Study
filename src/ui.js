@@ -9,6 +9,7 @@
  *   #/kit/<id>/flashcards       flashcard deck
  *   #/kit/<id>/exam             timed practice exam
  *   #/resource/<id>             one resource: study document
+ *   #/share/<id>                a one-time shared study kit (read-only)
  *
  * Rendering is a full rebuild of #view on store changes; user drafts in
  * textareas are captured and restored around it so typing is never lost.
@@ -41,6 +42,8 @@
   let flashState = { kitId: null, index: 0, flipped: false, order: null, known: {}, again: {}, shuffled: false };
   // Timed exam session. Lives in memory only: reloading the page abandons a run.
   let examState = { kitId: null, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
+  // The one-time share being viewed, and whether its copy has been deleted.
+  let shareState = { id: null, status: "idle", started: false, payload: null, error: "", deleted: false };
   let renderQueued = false;
   let pendingReprocessId = null;
   let lastQuizKey = null;
@@ -127,6 +130,8 @@
       route = { name: "kit", id: parts[1], tab };
     } else if (parts[0] === "resource" && parts[1]) {
       route = { name: "resource", id: parts[1] };
+    } else if (parts[0] === "share" && parts[1]) {
+      route = { name: "share", id: parts[1].toLowerCase() };
     } else {
       route = { name: "dashboard", id: null };
     }
@@ -217,6 +222,11 @@
 
   function render() {
     parseRoute();
+    // Leaving a share forgets its content, so coming back re-checks the server
+    // and gets the honest "already used" answer instead of a cached copy.
+    if (route.name !== "share" && shareState.id !== null) {
+      shareState = { id: null, status: "idle", started: false, payload: null, error: "", deleted: false };
+    }
     const snapshot = captureDrafts();
     els.view.innerHTML = "";
 
@@ -237,6 +247,17 @@
     } else if (route.name === "resource") {
       const resource = store.getResource(route.id);
       els.view.appendChild(resource ? renderResource(resource) : renderMissing("That resource no longer exists."));
+    } else if (route.name === "share") {
+      if (shareState.id !== route.id) {
+        shareState = { id: route.id, status: "loading", started: false, payload: null, error: "", deleted: false };
+      }
+      els.view.appendChild(renderShare());
+      if (!shareState.started) {
+        shareState.started = true;
+        // Started after the view exists, and repainted via scheduleRender, so a
+        // second render never happens in the middle of this one.
+        startShareLoad(route.id);
+      }
     } else {
       els.view.appendChild(renderDashboard());
     }
@@ -456,6 +477,7 @@
         </div>
         <div class="kit-actions">
           <button class="btn primary small" data-action="open-kit" data-id="${esc(kit.id)}">Open</button>
+          <button class="btn small" data-action="share-kit" data-id="${esc(kit.id)}">Share</button>
           <button class="btn small" data-action="rename-kit" data-id="${esc(kit.id)}">Rename</button>
           <button class="btn small" data-action="move-kit" data-id="${esc(kit.id)}">Move</button>
           <button class="btn small" data-action="delete-kit" data-id="${esc(kit.id)}">Delete</button>
@@ -512,6 +534,7 @@
           <h1>${esc(kit.name)}</h1>
         </div>
         <div class="row tight">
+          <button class="btn" data-action="share-kit" data-id="${esc(kit.id)}">Share kit</button>
           <button class="btn" data-action="edit-kit" data-id="${esc(kit.id)}">Edit details</button>
           <button class="btn" data-action="delete-kit" data-id="${esc(kit.id)}">Delete kit</button>
         </div>
@@ -768,6 +791,206 @@
           })
           .join("")}
       </ol>`;
+  }
+
+  /* ------------------------- one-time sharing ---------------------- */
+
+  /**
+   * Fetch a share when its route opens, then delete it from the Worker so the
+   * link only works once. Progress is reported through `shareState`.
+   */
+  function startShareLoad(id) {
+    Symus.share
+      .openShare(id)
+      .then(async (payload) => {
+        if (shareState.id !== id) return;
+        shareState.payload = payload;
+        shareState.status = "ready";
+        scheduleRender();
+
+        // The reader has the content: remove the copy on the server.
+        const deleted = await Symus.share.consumeShare(id);
+        if (shareState.id !== id) return;
+        shareState.deleted = deleted;
+        scheduleRender();
+      })
+      .catch((error) => {
+        if (shareState.id !== id) return;
+        shareState.status = error.gone || error.status === 404 ? "gone" : "error";
+        shareState.error = error.message || "This share could not be opened.";
+        scheduleRender();
+      });
+  }
+
+  function renderShare() {
+    const state = shareState;
+    const page = document.createElement("div");
+    page.className = "page";
+
+    if (state.status === "loading" || state.status === "idle") {
+      page.innerHTML = `
+        <div class="empty">
+          <h2>Opening shared kit…</h2>
+          <p class="muted">Fetching the study documents.</p>
+        </div>`;
+      return page;
+    }
+
+    if (state.status === "gone") {
+      page.innerHTML = `
+        <div class="empty hero">
+          <h2>This link has already been used</h2>
+          <p class="muted">One-time links are deleted as soon as they are opened. Ask for a new one.</p>
+          <a class="btn primary" href="#/">Open Symus Study</a>
+        </div>`;
+      return page;
+    }
+
+    if (state.status === "error") {
+      page.innerHTML = `
+        <div class="empty">
+          <h2>That link could not be opened</h2>
+          <p class="muted">${esc(state.error)}</p>
+          <a class="btn" href="#/">Open Symus Study</a>
+        </div>`;
+      return page;
+    }
+
+    const payload = state.payload;
+    const shared = payload.sharedAt ? relativeTime(payload.sharedAt) : "";
+    const allMarkdown = payload.resources
+      .map((resource) => `# ${resource.name}\n\n${resource.document}`)
+      .join("\n\n---\n\n");
+
+    page.innerHTML = `
+      <nav class="crumbs"><a href="#/">Symus Study</a><span>/</span><span>Shared kit</span></nav>
+      <header class="page-head">
+        <div class="page-title">
+          <p class="eyebrow">Shared study kit</p>
+          <h1>${esc(payload.name)}</h1>
+          ${payload.subject ? `<p class="page-sub">${esc(payload.subject)}</p>` : ""}
+        </div>
+        <div class="row tight">
+          <button class="btn small" data-action="copy-share" data-id="${esc(payload.id)}">Copy all</button>
+          <button class="btn small" data-action="download-share" data-id="${esc(payload.id)}">Download .md</button>
+        </div>
+      </header>
+
+      <div class="notice ${state.deleted ? "subtle" : "error-soft"}">
+        ${
+          state.deleted
+            ? `<strong>One-time link.</strong> These notes have now been deleted from the server, so this address will not work again. Save a copy if you need it.`
+            : `<strong>One-time link.</strong> The server copy could not be deleted — this link may still open until it expires.`
+        }
+      </div>
+
+      <p class="muted small">${plural(payload.resources.length, "study document")}${
+        shared ? ` · shared ${esc(shared)}` : ""
+      } · read-only</p>
+
+      <div class="share-docs">
+        ${payload.resources
+          .map(
+            (resource, index) => `
+          <section class="panel">
+            <div class="panel-head">
+              <div class="row tight">
+                <span class="res-icon ${resource.type}">${resource.type === "pdf" ? "PDF" : "TXT"}</span>
+                <div>
+                  <h2>${esc(resource.name)}</h2>
+                  <span class="muted tiny">${plural(resource.document.split(/\s+/).filter(Boolean).length, "word")} · document ${index + 1} of ${payload.resources.length}</span>
+                </div>
+              </div>
+            </div>
+            <article class="md">${md.render(resource.document)}</article>
+          </section>`,
+          )
+          .join("")}
+      </div>
+
+      <div class="empty">
+        <h2>Make your own study kits</h2>
+        <p class="muted">Symus Study turns your PDFs and notes into summary study notes, flashcards and a timed practice exam.</p>
+        <a class="btn primary" href="#/">Open Symus Study</a>
+      </div>`;
+    return page;
+  }
+
+  /** Modal that creates the link, then shows it with a copy button. */
+  function openShareKit(kitId) {
+    const kit = store.getKit(kitId);
+    if (!kit) return;
+    const documents = Symus.share.collectDocuments(kit, store.resourcesInKit(kit.id));
+    const problem = Symus.share.checkSharable(documents);
+
+    openModal({
+      title: "Share this study kit",
+      confirmLabel: "Create one-time link",
+      body: `
+        ${
+          problem
+            ? `<div class="notice error-soft">${esc(problem)}</div>`
+            : `<div class="notice subtle">
+                 Uploads the ${plural(documents.length, "study document")} in “${esc(kit.name)}” so anyone with
+                 the link can read them — read-only, no account, no API key.
+               </div>
+               <div class="notice error-soft">
+                 <strong>The link works once.</strong> It is deleted from the server as soon as it is opened, and
+                 an unopened link expires after seven days. Only the finished study documents are uploaded —
+                 never your PDFs, your questions, or your NIM key.
+               </div>`
+        }`,
+      onConfirm: async (root) => {
+        if (problem) return false;
+        const confirm = root.querySelector("[data-confirm]");
+        if (confirm) {
+          confirm.disabled = true;
+          confirm.textContent = "Creating…";
+        }
+        try {
+          const share = await Symus.share.createShare({
+            name: kit.name,
+            subject: kit.subject || "",
+            documents,
+          });
+          showShareLink(share, kit, documents.length);
+        } catch (error) {
+          if (confirm) {
+            confirm.disabled = false;
+            confirm.textContent = "Create one-time link";
+          }
+          toast(error.message || "Could not create the link.", "error");
+        }
+        return false; // showShareLink opens its own dialog
+      },
+    });
+  }
+
+  function showShareLink(share, kit, count) {
+    openModal({
+      title: "Your one-time link",
+      confirmLabel: "Done",
+      body: `
+        <p class="muted small">${plural(count, "study document")} from “${esc(kit.name)}” are now on the server.</p>
+        <div class="share-link">
+          <input id="share-link-value" type="text" readonly value="${esc(share.url)}" aria-label="Share link">
+          <button class="btn" type="button" id="share-link-copy">Copy</button>
+        </div>
+        <div class="notice error-soft">
+          Send this to whoever needs it. <strong>It only works once</strong> — the copy is deleted the moment
+          it is opened${share.expiresAt ? `, and it expires on ${esc(new Date(share.expiresAt).toLocaleDateString())} if nobody opens it` : ""}.
+          You cannot get the link back, but you can share the kit again at any time.
+        </div>`,
+      onMount: (root) => {
+        const input = root.querySelector("#share-link-value");
+        input.focus();
+        input.select();
+        root.querySelector("#share-link-copy").addEventListener("click", () => {
+          copyText(share.url, "Link copied");
+        });
+      },
+      onConfirm: () => true,
+    });
   }
 
   /* ----------------------------- flashcards ------------------------ */
@@ -2197,6 +2420,34 @@
       case "make-quiz": {
         const kit = store.getKit(id);
         if (kit) openQuizOptions(kit.id);
+        break;
+      }
+      case "share-kit": {
+        const kit = store.getKit(id);
+        if (kit) openShareKit(kit.id);
+        break;
+      }
+      case "copy-share": {
+        const payload = shareState.payload;
+        if (!payload) break;
+        copyText(
+          payload.resources
+            .map((resource) => `# ${resource.name}\n\n${resource.document}`)
+            .join("\n\n---\n\n"),
+          "Notes copied",
+        );
+        break;
+      }
+      case "download-share": {
+        const payload = shareState.payload;
+        if (!payload) break;
+        download(
+          safeFileName(payload.name + " notes", "md"),
+          payload.resources
+            .map((resource) => `# ${resource.name}\n\n${resource.document}`)
+            .join("\n\n---\n\n"),
+          "text/markdown;charset=utf-8",
+        );
         break;
       }
       case "make-flashcards": {
