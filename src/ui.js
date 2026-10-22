@@ -43,7 +43,17 @@
   // Timed exam session. Lives in memory only: reloading the page abandons a run.
   let examState = { kitId: null, status: "idle", answers: {}, startedAt: 0, endsAt: 0, secondsUsed: 0 };
   // The one-time share being viewed, and whether its copy has been deleted.
-  let shareState = { id: null, status: "idle", started: false, payload: null, error: "", deleted: false };
+  let shareState = {
+    id: null,
+    status: "idle",
+    started: false,
+    prompted: false,
+    payload: null,
+    error: "",
+    // Set only once the recipient has added the kit to their library.
+    importedKitId: null,
+    consumed: false,
+  };
   let renderQueued = false;
   let pendingReprocessId = null;
   let lastQuizKey = null;
@@ -225,7 +235,16 @@
     // Leaving a share forgets its content, so coming back re-checks the server
     // and gets the honest "already used" answer instead of a cached copy.
     if (route.name !== "share" && shareState.id !== null) {
-      shareState = { id: null, status: "idle", started: false, payload: null, error: "", deleted: false };
+      shareState = {
+        id: null,
+        status: "idle",
+        started: false,
+        prompted: false,
+        payload: null,
+        error: "",
+        importedKitId: null,
+        consumed: false,
+      };
     }
     const snapshot = captureDrafts();
     els.view.innerHTML = "";
@@ -249,7 +268,16 @@
       els.view.appendChild(resource ? renderResource(resource) : renderMissing("That resource no longer exists."));
     } else if (route.name === "share") {
       if (shareState.id !== route.id) {
-        shareState = { id: route.id, status: "loading", started: false, payload: null, error: "", deleted: false };
+        shareState = {
+          id: route.id,
+          status: "loading",
+          started: false,
+          prompted: false,
+          payload: null,
+          error: "",
+          importedKitId: null,
+          consumed: false,
+        };
       }
       els.view.appendChild(renderShare());
       if (!shareState.started) {
@@ -796,23 +824,29 @@
   /* ------------------------- one-time sharing ---------------------- */
 
   /**
-   * Fetch a share when its route opens, then delete it from the Worker so the
-   * link only works once. Progress is reported through `shareState`.
+   * Fetch a share when its route opens and offer to add it to the library.
+   *
+   * Nothing is deleted here: the copy on the server is only removed once the
+   * recipient actually creates their own kit from it, so cancelling leaves the
+   * link usable.
    */
   function startShareLoad(id) {
     Symus.share
       .openShare(id)
-      .then(async (payload) => {
+      .then((payload) => {
         if (shareState.id !== id) return;
         shareState.payload = payload;
         shareState.status = "ready";
         scheduleRender();
-
-        // The reader has the content: remove the copy on the server.
-        const deleted = await Symus.share.consumeShare(id);
-        if (shareState.id !== id) return;
-        shareState.deleted = deleted;
-        scheduleRender();
+        // Prompt once per visit; the page keeps an "Add to my library" button.
+        if (!shareState.prompted) {
+          shareState.prompted = true;
+          setTimeout(() => {
+            if (shareState.id === id && shareState.status === "ready" && !shareState.importedKitId) {
+              openShareImport();
+            }
+          }, 160);
+        }
       })
       .catch((error) => {
         if (shareState.id !== id) return;
@@ -820,6 +854,72 @@
         shareState.error = error.message || "This share could not be opened.";
         scheduleRender();
       });
+  }
+
+  /**
+   * "Add this shared kit to your library?" — the only place a share is
+   * consumed. Cancelling or closing leaves the server copy untouched.
+   */
+  function openShareImport() {
+    const payload = shareState.payload;
+    if (!payload || shareState.importedKitId) return;
+    const count = payload.resources.length;
+
+    openModal({
+      title: "Add this kit to your library",
+      confirmLabel: "Add to my library",
+      body: `
+        <div class="notice subtle">
+          Creates a study kit you own from the ${plural(count, "shared study document")} in
+          “${esc(payload.name)}”. Questions, flashcards and a practice exam can then be generated from it.
+          Nothing is deleted while you are deciding.
+        </div>
+        <div class="field"><label for="share-kit-name">Kit name</label>
+          <input id="share-kit-name" type="text" value="${esc(payload.name)}"></div>
+        <div class="field"><label for="share-kit-class">Class</label>
+          <select id="share-kit-class">${classOptions("")}</select></div>`,
+      onConfirm: async (root) => {
+        const name = (root.querySelector("#share-kit-name").value || "").trim() || payload.name;
+        const classId = root.querySelector("#share-kit-class").value;
+        const confirm = root.querySelector("[data-confirm]");
+        if (confirm) {
+          confirm.disabled = true;
+          confirm.textContent = "Adding…";
+        }
+
+        let kit;
+        try {
+          kit = store.importSharedKit({
+            name,
+            subject: payload.subject || "",
+            resources: payload.resources,
+          });
+        } catch (error) {
+          if (confirm) {
+            confirm.disabled = false;
+            confirm.textContent = "Add to my library";
+          }
+          toast(error.message || "Could not add this kit.", "error");
+          return false;
+        }
+
+        if (classId) store.updateKit(kit.id, { classId });
+        shareState.importedKitId = kit.id;
+
+        // The kit exists, so the shared copy has served its purpose.
+        const consumed = await Symus.share.consumeShare(shareState.id);
+        shareState.consumed = consumed;
+
+        toast(
+          consumed
+            ? "Kit added. The shared copy has been deleted."
+            : "Kit added. The shared copy could not be deleted yet.",
+          consumed ? "success" : "info",
+        );
+        navigate(`#/kit/${kit.id}`);
+        return true;
+      },
+    });
   }
 
   function renderShare() {
@@ -840,7 +940,8 @@
       page.innerHTML = `
         <div class="empty hero">
           <h2>This link has already been used</h2>
-          <p class="muted">One-time links are deleted as soon as they are opened. Ask for a new one.</p>
+          <p class="muted">A shared kit is removed from the server once someone adds it to their library.
+            Ask for a new link if you still need it.</p>
           <a class="btn primary" href="#/">Open Symus Study</a>
         </div>`;
       return page;
@@ -871,18 +972,25 @@
           ${payload.subject ? `<p class="page-sub">${esc(payload.subject)}</p>` : ""}
         </div>
         <div class="row tight">
+          ${
+            state.importedKitId
+              ? `<a class="btn small primary" href="#/kit/${esc(state.importedKitId)}">Open my kit</a>`
+              : `<button class="btn small primary" data-action="import-share">Add to my library</button>`
+          }
           <button class="btn small" data-action="copy-share" data-id="${esc(payload.id)}">Copy all</button>
           <button class="btn small" data-action="download-share" data-id="${esc(payload.id)}">Download .md</button>
         </div>
       </header>
 
-      <div class="notice ${state.deleted ? "subtle" : "error-soft"}">
-        ${
-          state.deleted
-            ? `<strong>One-time link.</strong> These notes have now been deleted from the server, so this address will not work again. Save a copy if you need it.`
-            : `<strong>One-time link.</strong> The server copy could not be deleted — this link may still open until it expires.`
-        }
-      </div>
+      ${
+        state.importedKitId
+          ? `<div class="notice subtle"><strong>Added to your library.</strong> You now own a copy of these
+               documents — generate questions, flashcards or an exam from it at any time.
+               ${state.consumed ? "The shared copy has been deleted from the server, so this link is spent." : "The shared copy could not be deleted yet; it will disappear when it expires."}</div>`
+          : `<div class="notice subtle"><strong>One-time link.</strong> Nothing has been copied yet — the shared
+               copy is deleted from the server <em>after</em> you add this kit to your library. Until then the
+               link still works, so you can read it first and decide.</div>`
+      }
 
       <p class="muted small">${plural(payload.resources.length, "study document")}${
         shared ? ` · shared ${esc(shared)}` : ""
@@ -909,9 +1017,20 @@
       </div>
 
       <div class="empty">
-        <h2>Make your own study kits</h2>
-        <p class="muted">Symus Study turns your PDFs and notes into summary study notes, flashcards and a timed practice exam.</p>
-        <a class="btn primary" href="#/">Open Symus Study</a>
+        <h2>${state.importedKitId ? "Make your own study kits" : "Keep these notes"}</h2>
+        <p class="muted">${
+          state.importedKitId
+            ? "Symus Study turns your PDFs and notes into summary study notes, flashcards and a timed practice exam."
+            : "Add this kit to your library to generate questions, flashcards and a practice exam from it."
+        }</p>
+        <div class="row center">
+          ${
+            state.importedKitId
+              ? `<a class="btn primary" href="#/kit/${esc(state.importedKitId)}">Open my kit</a>`
+              : `<button class="btn primary" data-action="import-share">Add to my library</button>`
+          }
+          <a class="btn" href="#/">Open Symus Study</a>
+        </div>
       </div>`;
     return page;
   }
@@ -2425,6 +2544,10 @@
       case "share-kit": {
         const kit = store.getKit(id);
         if (kit) openShareKit(kit.id);
+        break;
+      }
+      case "import-share": {
+        openShareImport();
         break;
       }
       case "copy-share": {

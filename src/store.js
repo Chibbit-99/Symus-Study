@@ -444,6 +444,69 @@
     return kit;
   }
 
+  /**
+   * Create a local kit from a shared kit: the kit itself plus one ready
+   * resource per shared study document.
+   *
+   * The shared payload only carries finished documents, so every imported
+   * resource starts as "ready" — there is nothing to extract or OCR.
+   * Committed once, so the library updates in a single step.
+   */
+  function importSharedKit({ name, subject = "", resources = [] } = {}) {
+    const entries = arr(resources)
+      .filter(
+        (entry) =>
+          entry &&
+          typeof entry === "object" &&
+          str(entry.name) &&
+          typeof entry.document === "string" &&
+          entry.document.trim(),
+      )
+      .map((entry) => ({
+        name: str(entry.name),
+        type: entry.type === "pdf" ? "pdf" : "text",
+        document: entry.document,
+      }));
+
+    if (!entries.length) {
+      throw new Error("This share has no study documents to add.");
+    }
+
+    const stamp = now();
+    const kit = {
+      id: uid("kit"),
+      name: str(name).trim() || "Shared study kit",
+      classId: null,
+      subject: str(subject).trim(),
+      createdAt: stamp,
+      updatedAt: stamp,
+      quiz: null,
+      flashcards: null,
+      exam: null,
+    };
+    state.kits.push(kit);
+
+    for (const entry of entries) {
+      state.resources.push({
+        id: uid("res"),
+        kitId: kit.id,
+        name: entry.name,
+        type: entry.type,
+        status: "ready",
+        statusMessage: "Added from a shared kit.",
+        error: "",
+        createdAt: stamp,
+        updatedAt: stamp,
+        pages: normalisePages({ gapNotes: "Added from a shared kit; no extraction was needed." }),
+        document: entry.document,
+        documentUpdatedAt: stamp,
+      });
+    }
+
+    commit();
+    return getKit(kit.id);
+  }
+
   function setKitFlashcards(kitId, flashcards) {
     const kit = getKit(kitId);
     if (!kit) return null;
@@ -597,6 +660,7 @@
     updateResource,
     setResourceDocument,
     setKitQuiz,
+    importSharedKit,
     setKitFlashcards,
     setKitExam,
     setKitExamAttempt,
