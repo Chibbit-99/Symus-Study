@@ -759,6 +759,14 @@
             : ""
         }
         ${quiz && quiz.truncated ? `<div class="notice subtle">The combined documents were long, so a proportional slice of each resource was used.</div>` : ""}
+        ${
+          quiz && quiz.wordingDropped
+            ? `<div class="notice subtle">${plural(
+                quiz.wordingDropped,
+                "question",
+              )} referred to your notes rather than the subject, so ${quiz.wordingDropped === 1 ? "it was" : "they were"} discarded. Regenerate for a full set.</div>`
+            : ""
+        }
         ${renderKitQuiz(kit)}
       </section>`;
   }
@@ -1533,6 +1541,14 @@
         </div>
         ${coverageChips(exam.coverage)}
         ${sourceFailures(exam)}
+        ${
+          exam.wordingDropped
+            ? `<div class="notice subtle">${plural(
+                exam.wordingDropped,
+                "question",
+              )} referred to your notes rather than the subject, so ${exam.wordingDropped === 1 ? "it was" : "they were"} discarded. Build a new exam for a full paper.</div>`
+            : ""
+        }
         <div class="exam-brief">
           <div><span class="exam-figure">${exam.items.length}</span><span class="muted tiny">questions</span></div>
           <div><span class="exam-figure">${exam.durationMinutes}</span><span class="muted tiny">minutes</span></div>

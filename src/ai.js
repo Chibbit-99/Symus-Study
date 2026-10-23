@@ -669,12 +669,22 @@
       exam ? "" : "- about 40% short answer with a model answer of 1–3 sentences.",
       count === 1 ? "- One question only: pick the single most important idea in the material." : "",
       "Rules:",
-      "- Every question must be answerable from the document alone.",
-      "- Never refer to the source itself: no \"the document\", \"the notes\", \"the text\", \"the passage\", \"the material\", \"the article\", \"as shown above\" or similar. The student sees only the question, so it must stand alone and say what it is about.",
+      "- Every question must be answerable from the ideas in the document, but the question text itself must never point at the document.",
+      "- Never refer to the source itself: no \"the document\", \"the notes\", \"the text\", \"the passage\", \"the material\", \"the article\", \"the source\", \"the reading\", \"according to the document\", \"as shown above\", \"as described in the notes\" or anything similar. The student sees only the question, so it must stand completely alone and say what it is about.",
+      "- Test APPLICATION, not memory of the source. Assume the student understood the ideas but has never seen this document: never ask what the document said, listed, defined, described, named or used as an example.",
+      "- Do NOT test the specific examples, case studies, worked problems, exercises, tables, figures, named people, organisations or numbers that the document uses to illustrate a point. They are illustrations, not the syllabus — use them only to work out the underlying rule, then ask about the rule.",
+      "- Put every idea into a NEW situation the document never mentions: an unfamiliar scenario, fresh data, a prediction when one variable changes, choosing the right method for a problem the student has not seen, spotting the error in someone's reasoning, or explaining why one approach beats another.",
+      "- Model answers must give the reasoning or result, not a summary of what the source said, and must never quote it.",
       "- Do not copy sentences verbatim; test understanding.",
       "- Distractors must be plausible and clearly wrong to someone who knows the material.",
       "- No duplicate questions, no trick questions, no 'all of the above'.",
       difficulty ? `- Target difficulty: ${difficulty}.` : "",
+      "",
+      "Wording examples — write in the style of the GOOD ones:",
+      '- BAD: "According to the document, what are the three stages of mitosis?" → GOOD: "A cell is treated with a drug that blocks spindle fibres from forming. At which stage will it arrest, and what will the chromosomes look like?"',
+      '- BAD: "What example does the text use to show osmosis in potato cells?" → GOOD: "Two potato cylinders, one in pure water and one in concentrated salt solution, are left for an hour. Predict which gains mass and explain the direction of water movement."',
+      '- BAD: "The notes list four types of transport. Which one is active?" → GOOD: "A root hair cell takes up mineral ions from soil in which the ions are already more concentrated inside the cell. Which transport process is required, and what must the cell supply?"',
+      "- If a question would only make sense to someone holding the document, rewrite it or drop it.",
       "",
       "Reply with ONLY this JSON object:",
       exam
@@ -687,29 +697,157 @@
     return lines.filter(Boolean).join("\n");
   }
 
-  function normaliseQuestions(raw, count) {
+  /* ------------------------------------------------------------------ *
+   * Wording guard
+   * ------------------------------------------------------------------ */
+
+  // Words the model uses when it talks about the source instead of the subject.
+  // "material" and "source" are deliberately absent: they are ordinary subject
+  // words ("raw material", "energy source") and would cause false positives.
+  const SOURCE_NOUNS = [
+    "study\\s+document",
+    "document",
+    "study\\s+notes",
+    "lecture\\s+notes",
+    "notes",
+    "textbook",
+    "text\\s?book",
+    "text",
+    "passage",
+    "article",
+    "reading",
+    "handout",
+    "worksheet",
+    "study\\s+guide",
+    "slides?",
+  ].join("|");
+
+  const SOURCE_REF = "(?:the|this|that|your|our)\\s+(?:" + SOURCE_NOUNS + ")";
+
+  // Any lingering pointer at the source, anywhere in the text.
+  const SOURCE_REFERENCE = new RegExp(
+    "\\b" +
+      SOURCE_REF +
+      "\\b" +
+      "|\\bas\\s+(?:shown|described|stated|mentioned|illustrated|explained|outlined)\\s+(?:above|below|earlier)\\b",
+    "i",
+  );
+
+  // "According to the document, …" / "In the notes: …" / "As described above, …"
+  const LEAD_IN = new RegExp(
+    "^\\s*(?:(?:according\\s+to|based\\s+on|as\\s+(?:shown|described|stated|mentioned|explained|outlined)\\s+in|in|from)\\s+" +
+      SOURCE_REF +
+      "\\s*[,:–—-]?\\s+)" +
+      "|^\\s*as\\s+(?:shown|described|stated|mentioned|explained|outlined)\\s+(?:above|below|earlier)\\s*[,:]?\\s+",
+    "i",
+  );
+
+  // "The document states that …" / "The notes explain that …"
+  const SAYS_IN = new RegExp(
+    "^\\s*" +
+      SOURCE_REF +
+      "\\s+(?:states|says|explains|describes|mentions|lists|notes|shows|indicates|claims|argues|outlines|defines)\\s+(?:that\\s+)?",
+    "i",
+  );
+
+  // Trailing pointers: "… , as described in the notes" / "… in the document".
+  const TRAILING = new RegExp(
+    "[,\\s]*\\b(?:as\\s+(?:shown|described|stated|mentioned|explained|outlined)\\s+)?(?:in|from)\\s+" +
+      SOURCE_REF +
+      "\\b\\s*",
+    "gi",
+  );
+
+  function recapitalise(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return "";
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+
+  /** True when the text still talks about the source rather than the subject. */
+  function referencesSource(text) {
+    return SOURCE_REFERENCE.test(String(text || ""));
+  }
+
+  /**
+   * Remove mechanical references to the source ("According to the document, …",
+   * "… as described in the notes") and return "" when a pointer cannot be
+   * removed without guessing what the question meant. Callers drop those
+   * questions; the quiz job tops the set up with fresh ones.
+   */
+  function cleanQuestionText(text, options = {}) {
+    let out = String(text || "").trim();
+    if (!out) return "";
+    const minLength = Number.isFinite(options.minLength) ? options.minLength : 3;
+
+    for (let pass = 0; pass < 3; pass++) {
+      const before = out;
+      out = out.replace(LEAD_IN, "").replace(SAYS_IN, "").replace(TRAILING, " ");
+      out = out.replace(/\s{2,}/g, " ").replace(/\s+([.?!,;:])/g, "$1").trim();
+      if (out === before) break;
+    }
+
+    out = recapitalise(out);
+    if (!out || out.length < minLength) return "";
+    // Anything left is too tangled to repair safely.
+    if (referencesSource(out)) return "";
+    return out;
+  }
+
+  /**
+   * Turn the model's JSON into questions the UI can use.
+   *
+   * `stats.dropped` counts questions thrown away for pointing at the source:
+   * the prompt forbids it, but models drift, so this is the backstop.
+   */
+  function normaliseQuestions(raw, count, stats = {}) {
     if (!raw || !Array.isArray(raw.questions)) return [];
     const questions = [];
+    const drop = () => {
+      stats.dropped = (stats.dropped || 0) + 1;
+    };
+
+    const explainText = (value) =>
+      typeof value === "string" ? cleanQuestionText(value, { minLength: 1 }) : "";
+
+    const cleanOptions = (value) =>
+      (Array.isArray(value) ? value : [])
+        .filter((option) => typeof option === "string" && option.trim())
+        // Options can legitimately be a single letter or number.
+        .map((option) => cleanQuestionText(option, { minLength: 1 }))
+        .filter(Boolean);
 
     for (const item of raw.questions) {
       if (!item || typeof item !== "object" || typeof item.question !== "string") continue;
-      const question = item.question.trim();
-      if (!question) continue;
+      const question = cleanQuestionText(item.question);
+      if (!question) {
+        if (item.question.trim()) drop();
+        continue;
+      }
 
       if (item.type === "mcq" && Array.isArray(item.options)) {
-        const options = item.options
-          .filter((option) => typeof option === "string" && option.trim())
-          .map((option) => option.trim())
-          .slice(0, 4);
-        if (options.length < 2) continue;
+        const rawOptions = (item.options || []).filter(
+          (option) => typeof option === "string" && option.trim(),
+        );
+        const options = cleanOptions(item.options).slice(0, 4);
+        // A distractor that also talks about the source makes the question odd,
+        // so keep the position of the original options intact but drop the item
+        // when any of them still reference the document.
+        if (options.length < 2 || options.length !== Math.min(rawOptions.length, 4)) {
+          drop();
+          continue;
+        }
         const answerIndex = Number.isInteger(item.answerIndex) ? item.answerIndex : 0;
         questions.push({
           type: "mcq",
           question,
           options,
+          // Cleaning never removes an option, so the index still points at the
+          // same choice.
           answerIndex: answerIndex >= 0 && answerIndex < options.length ? answerIndex : 0,
           answer: "",
-          explanation: typeof item.explanation === "string" ? item.explanation.trim() : "",
+          // An explanation that only exists to point at the source adds nothing.
+          explanation: explainText(item.explanation),
         });
       } else {
         const answer = typeof item.answer === "string" ? item.answer.trim() : "";
@@ -720,7 +858,7 @@
           options: [],
           answerIndex: 0,
           answer,
-          explanation: typeof item.explanation === "string" ? item.explanation.trim() : "",
+          explanation: explainText(item.explanation),
         });
       }
       if (questions.length >= count) break;
@@ -758,14 +896,22 @@
     });
 
     const parsed = parseJsonLoose(content);
-    let questions = normaliseQuestions(parsed, askCount);
+    const stats = { dropped: 0 };
+    let questions = normaliseQuestions(parsed, askCount, stats);
     if (style === "exam") {
       // A timed exam is marked automatically, so only keep choice questions.
       questions = questions.filter((question) => question.type === "mcq" && question.options.length >= 2);
     }
     if (!questions.length) {
-      throw new Error("The model did not return usable questions for this material.");
+      throw new Error(
+        stats.dropped
+          ? "Every question the model wrote referred to the source material, so none could be used. Try again."
+          : "The model did not return usable questions for this material.",
+      );
     }
+    // Reported so the job can tell the student a few questions were discarded
+    // for pointing at the document.
+    questions.wordingDropped = stats.dropped;
     return questions;
   }
 
@@ -1081,7 +1227,10 @@
     generateDocument,
     readEventStream,
     generateQuestions,
+    buildQuestionsPrompt,
     normaliseQuestions,
+    cleanQuestionText,
+    referencesSource,
     buildMarkingPrompt,
     normaliseMarking,
     markShortAnswer,
