@@ -438,6 +438,8 @@
     }));
     const failures = [];
     const groups = [];
+    // Questions the wording guard had to throw away for referring to the source.
+    let wordingDropped = 0;
 
     const ask = async (resourceId, quota, label) => {
       const resource = byId.get(resourceId);
@@ -455,6 +457,7 @@
           onProgress: (message) => progress(job, { step: message }),
         });
         if (entry) entry.produced += items.length;
+        wordingDropped += items.wordingDropped || 0;
         return items;
       } catch (error) {
         if (error && error.name === "AbortError") throw error;
@@ -498,7 +501,7 @@
       }
     }
 
-    return { kit, ready, groups, coverage, failures };
+    return { kit, ready, groups, coverage, failures, wordingDropped };
   }
 
   /** Merge per-resource groups, keeping de-duplication and interleaving. */
@@ -522,7 +525,7 @@
 
     progress(job, { step: `Planning ${target} question(s)…`, progress: 5 });
 
-    const { kit, ready, groups, coverage, failures } = await collectAcrossResources(job, {
+    const { kit, ready, groups, coverage, failures, wordingDropped } = await collectAcrossResources(job, {
       target,
       generate: ({ apiKey, resource, quota, sourceCount, partLabel, signal, onProgress }) =>
         ai.generateQuestions({
@@ -550,6 +553,7 @@
       coverage,
       failures,
       truncated: ready.some((resource) => resource.document.length > ai.MAX_QUIZ_SOURCE_CHARS),
+      wordingDropped,
     });
 
     progress(job, {
@@ -620,7 +624,7 @@
 
     progress(job, { step: `Planning a ${target}-question exam…`, progress: 5 });
 
-    const { kit, ready, groups, coverage, failures } = await collectAcrossResources(job, {
+    const { kit, ready, groups, coverage, failures, wordingDropped } = await collectAcrossResources(job, {
       target,
       generate: ({ apiKey, resource, quota, sourceCount, partLabel, signal, onProgress }) =>
         ai.generateQuestions({
@@ -653,6 +657,7 @@
       sourceNames: ready.map((resource) => resource.name),
       coverage,
       failures,
+      wordingDropped,
     });
 
     progress(job, {

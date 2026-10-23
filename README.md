@@ -202,6 +202,16 @@ Consequences you will see in the questions tab:
 - Progress reports which resource is being written and how many questions it is asked for.
 - Questions **never mention the source** (`the document`, `the notes`, `as shown above`, …) — each one
   is written to stand alone, so it reads like a real exam question rather than a pointer back to notes.
+  The prompt bans every such phrase and a wording guard cleans or discards any that slip through: lead-ins
+  like *"According to the document, …"* or *"… as described in the notes"* are stripped, and a question
+  that cannot be repaired without guessing is dropped (a note in the questions tab says how many), with
+  the top-up pass asked for replacements.
+- Questions test **application, not recall of the source**. The prompt forbids asking what the document
+  said, listed or defined, and forbids testing the specific examples, case studies, worked problems,
+  tables, named people or numbers the document uses to illustrate a point. Instead each idea is put into
+  a **new situation** the document never mentions — an unfamiliar scenario, fresh data, a prediction when
+  a variable changes, choosing a method for a problem the student has not seen, or spotting an error —
+  so the set rehearses the skill rather than the page.
 - Questions are answered **one at a time**: question *n* of *N* with a progress bar, and no later
   question is visible until you move on.
 - An answer locks once you give it — a chosen option cannot be changed, and a written answer cannot be
@@ -238,6 +248,8 @@ merged, de-duplicated by prompt and interleaved so the deck is not grouped by re
 The same material as the practice questions, but as a **timed paper**:
 
 - **Multiple choice only**, so the paper can be marked automatically — no short answers.
+- Exam questions follow the same wording rules: no references to the source, and applied scenarios rather
+  than questions about the document's own examples.
 - Choose 10–30 questions and a time limit, or let it pick about 1¼ minutes per question (minimum 5,
   rounded to 5).
 - **Start exam** begins a countdown. Questions show no feedback while the exam runs; answers are

@@ -227,6 +227,7 @@
       coverage: normaliseCoverage(raw.coverage),
       failures: normaliseFailures(raw.failures),
       lastAttempt: normaliseExamAttempt(raw.lastAttempt),
+      wordingDropped: Number.isFinite(Number(raw.wordingDropped)) ? Math.max(0, Number(raw.wordingDropped)) : 0,
     };
   }
 
@@ -247,6 +248,8 @@
       coverage: normaliseCoverage(raw.coverage),
       failures: normaliseFailures(raw.failures),
       truncated: raw.truncated === true,
+      // Questions discarded for referring to the source document.
+      wordingDropped: Number.isFinite(Number(raw.wordingDropped)) ? Math.max(0, Number(raw.wordingDropped)) : 0,
     };
   }
 
